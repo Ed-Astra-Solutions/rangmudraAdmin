@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rangmudra — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Italiana&family=Archivo:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/reset.css">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+
+  <!-- Login screen -->
+  <section id="login-screen" class="login-screen">
+    <div class="login-card">
+      <h1 class="login-card__brand">RANGMUDRA</h1>
+      <p class="login-card__eyebrow">ADMIN PANEL</p>
+      <form id="login-form" class="login-form" autocomplete="off">
+        <label class="field">
+          <span class="field__label">Passcode</span>
+          <input type="password" id="login-passcode" required autofocus placeholder="Enter admin passcode">
+        </label>
+        <p id="login-error" class="field__error" hidden></p>
+        <button type="submit" class="btn btn--primary btn--block">Sign in</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- App shell -->
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="admin-sidebar">
+      <div class="admin-sidebar__brand">
+        <span class="brand-wordmark">RANGMUDRA</span>
+        <span class="brand-tag">Admin</span>
+      </div>
+      <nav class="admin-nav" role="tablist" aria-label="Admin sections">
+        <button class="admin-tab" role="tab" data-tab="products" aria-selected="true">Products</button>
+        <button class="admin-tab" role="tab" data-tab="workshops" aria-selected="false">Workshops</button>
+        <button class="admin-tab" role="tab" data-tab="blogs" aria-selected="false">Blogs</button>
+        <button class="admin-tab" role="tab" data-tab="sections" aria-selected="false">Section Images</button>
+      </nav>
+      <div class="admin-sidebar__footer">
+        <a class="link-quiet" href="/" target="_blank" rel="noopener">View site ↗</a>
+        <button id="logout-btn" class="btn btn--ghost btn--sm btn--block">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="admin-main">
+
+      <!-- ============== PRODUCTS ============== -->
+      <section class="panel" data-panel="products">
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Products</h2>
+            <p class="panel__subtitle">Manage the shop catalogue — add, edit, or remove products.</p>
+          </div>
+          <button class="btn btn--primary" id="add-product-btn">+ New product</button>
+        </div>
+        <div class="grid grid--3" id="products-grid"></div>
+      </section>
+
+      <!-- ============== WORKSHOPS ============== -->
+      <section class="panel" data-panel="workshops" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Workshops</h2>
+            <p class="panel__subtitle">Edit Experience, Corporate, and Curated workshops.</p>
+          </div>
+          <button class="btn btn--primary" id="add-workshop-btn">+ New workshop</button>
+        </div>
+        <div class="filter-row" id="workshop-category-filter">
+          <button class="chip active" data-cat="all">All</button>
+          <button class="chip" data-cat="experience">Experience</button>
+          <button class="chip" data-cat="corporate">Corporate</button>
+          <button class="chip" data-cat="curated">Curated</button>
+        </div>
+        <div class="grid grid--3" id="workshops-grid"></div>
+      </section>
+
+      <!-- ============== BLOGS ============== -->
+      <section class="panel" data-panel="blogs" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Blogs</h2>
+            <p class="panel__subtitle">Write and edit the Quick Reads / journal posts shown on the public site.</p>
+          </div>
+          <button class="btn btn--primary" id="add-blog-btn">+ New blog</button>
+        </div>
+        <div class="grid grid--3" id="blogs-grid"></div>
+      </section>
+
+      <!-- ============== SECTIONS ============== -->
+      <section class="panel" data-panel="sections" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Section images</h2>
+            <p class="panel__subtitle">Replace the hero and feature images across the public site.</p>
+          </div>
+        </div>
+        <div id="sections-list"></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal-backdrop" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal__head">
+        <h3 id="modal-title" class="modal__title">Edit</h3>
+        <button class="modal__close" id="modal-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal__body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="/admin/admin.js"></script>
+</body>
+</html>
