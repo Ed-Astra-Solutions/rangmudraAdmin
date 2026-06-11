@@ -10,4 +10,4 @@
 // NOTE: GitHub Pages is served over HTTPS, so the API base MUST be https://
 // (a plain http:// EC2 endpoint will be blocked by the browser as mixed content).
 // The backend must also list this page's origin in its CORS_ORIGINS env var.
-window.RANGMUDRA_API_BASE = '';
+window.RANGMUDRA_API_BASE = 'https://api.rangmudra.com';
