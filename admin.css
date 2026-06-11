@@ -360,3 +360,44 @@ body {
   z-index: 200;
 }
 .toast--error { background: #B44; }
+
+/* ---------- Admins panel ---------- */
+.admin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--w1);
+  border: 1px solid rgba(44, 26, 16, 0.12);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+.admin-row__email {
+  margin: 0;
+  font-family: var(--font-archivo, sans-serif);
+  font-size: 15px;
+  color: var(--sc-100);
+}
+.admin-row__meta {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--sc-l3);
+}
+.admin-row__you {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--w1);
+  background: var(--pr-b2);
+  border-radius: 999px;
+}
+.admin-sidebar__who {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--sc-l3);
+  word-break: break-all;
+}

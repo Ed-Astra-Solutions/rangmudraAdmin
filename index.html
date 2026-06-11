@@ -7,9 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Italiana&family=Archivo:wght@400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/reset.css">
-  <link rel="stylesheet" href="/css/tokens.css">
-  <link rel="stylesheet" href="/admin/admin.css">
+  <link rel="stylesheet" href="css/reset.css">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="admin.css">
 </head>
 <body>
 
@@ -18,10 +18,14 @@
     <div class="login-card">
       <h1 class="login-card__brand">RANGMUDRA</h1>
       <p class="login-card__eyebrow">ADMIN PANEL</p>
-      <form id="login-form" class="login-form" autocomplete="off">
+      <form id="login-form" class="login-form" autocomplete="on">
         <label class="field">
-          <span class="field__label">Passcode</span>
-          <input type="password" id="login-passcode" required autofocus placeholder="Enter admin passcode">
+          <span class="field__label">Email</span>
+          <input type="email" id="login-email" name="email" required autofocus autocomplete="username" placeholder="you@rangmudra.com">
+        </label>
+        <label class="field">
+          <span class="field__label">Password</span>
+          <input type="password" id="login-password" name="password" required autocomplete="current-password" placeholder="Enter your password">
         </label>
         <p id="login-error" class="field__error" hidden></p>
         <button type="submit" class="btn btn--primary btn--block">Sign in</button>
@@ -41,8 +45,10 @@
         <button class="admin-tab" role="tab" data-tab="workshops" aria-selected="false">Workshops</button>
         <button class="admin-tab" role="tab" data-tab="blogs" aria-selected="false">Blogs</button>
         <button class="admin-tab" role="tab" data-tab="sections" aria-selected="false">Section Images</button>
+        <button class="admin-tab" role="tab" data-tab="admins" aria-selected="false">Admins</button>
       </nav>
       <div class="admin-sidebar__footer">
+        <p class="admin-sidebar__who" id="current-admin" hidden></p>
         <a class="link-quiet" href="/" target="_blank" rel="noopener">View site ↗</a>
         <button id="logout-btn" class="btn btn--ghost btn--sm btn--block">Sign out</button>
       </div>
@@ -103,6 +109,18 @@
         <div id="sections-list"></div>
       </section>
 
+      <!-- ============== ADMINS ============== -->
+      <section class="panel" data-panel="admins" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Admins</h2>
+            <p class="panel__subtitle">Manage who can sign in to this panel. New admins log in with their email and password.</p>
+          </div>
+          <button class="btn btn--primary" id="add-admin-btn">+ New admin</button>
+        </div>
+        <div id="admins-list"></div>
+      </section>
+
     </main>
   </div>
 
@@ -120,6 +138,7 @@
   <!-- Toast -->
   <div id="toast" class="toast" hidden></div>
 
-  <script type="module" src="/admin/admin.js"></script>
+  <script src="config.js"></script>
+  <script type="module" src="admin.js"></script>
 </body>
 </html>

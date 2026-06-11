@@ -1,0 +1,158 @@
+/* tokens.css — Design tokens and typography utility classes */
+
+@import url('https://fonts.googleapis.com/css2?family=Italiana&family=Archivo:wght@400&display=swap');
+
+:root {
+  /* Primary (tan / gold) */
+  --pr-100: #C2A27C;
+  --pr-b1:  rgba(0, 0, 0, 0.2);
+  --pr-b2:  #7C684F;
+  --pr-b3:  #63533F;
+  --pr-l1:  #CEB596;
+  --pr-l2:  #D8C4AB;
+  --pr-l3:  #E0D0BC;
+  --pr-l5:  #ECE3D7;
+
+  /* Secondary (chocolate) */
+  --sc-100: #2C1A10;
+  --sc-l1:  #413128;
+  --sc-l3:  #655851;
+  --sc-l4x: #A9A19D;
+
+  /* Accent (sage — reserved) */
+  --ac-100: #81997A;
+  --ac-b1:  #677A62;
+  --ac-b2:  #52624E;
+  --ac-b3:  #424E3E;
+  --ac-l1:  #9AAD95;
+  --ac-l2:  #AEBDAA;
+  --ac-l3:  #BECABB;
+
+  /* Neutrals */
+  --w1: #FFFFFF;
+  --b1: #000000;
+  --b2: #191919;
+  --b3: #454545;
+  --b4: #8F8F8F;
+
+  /* Error (TBD — temporary) */
+  --error: #B44444;
+
+  /* Typography families */
+  --font-italiana: 'Italiana', serif;
+  --font-archivo:  'Archivo', sans-serif;
+
+  /* Layout */
+  --max-content: 1280px;
+  --gutter-desktop: 48px;
+  --gutter-tablet: 32px;
+  --gutter-mobile: 20px;
+  --section-v-desktop: 120px;
+  --section-v-tablet: 80px;
+  --section-v-mobile: 56px;
+
+  /* Shadows */
+  --shadow-card:    0 1px 2px rgba(44, 26, 16, 0.04), 0 4px 12px rgba(44, 26, 16, 0.04);
+  --shadow-hover:   0 8px 24px rgba(44, 26, 16, 0.08);
+  --shadow-dropdown:0 8px 32px rgba(44, 26, 16, 0.12);
+
+  /* Motion */
+  --ease-standard:  cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-decelerate:cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-micro:      200ms;
+  --dur-standard:   400ms;
+  --dur-hero:       800ms;
+}
+
+/* ─── Typography utility classes ─────────────────────────────────────────── */
+
+.h1-i {
+  font-family: var(--font-italiana);
+  font-size: 48px;
+  line-height: 64px;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
+.h2-i {
+  font-family: var(--font-italiana);
+  font-size: 40px;
+  line-height: 56px;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
+.h3-i {
+  font-family: var(--font-italiana);
+  font-size: 32px;
+  line-height: 48px;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
+.h4-i {
+  font-family: var(--font-italiana);
+  font-size: 24px;
+  line-height: 32px;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
+.h5-i {
+  font-family: var(--font-italiana);
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: 0.02em;
+  font-weight: 400;
+}
+
+.h4-a {
+  font-family: var(--font-archivo);
+  font-size: 24px;
+  line-height: 32px;
+  letter-spacing: 0.15em;
+  font-weight: 400;
+}
+
+.h5-a {
+  font-family: var(--font-archivo);
+  font-size: 16px;
+  line-height: 24px;
+  letter-spacing: 0.15em;
+  font-weight: 400;
+}
+
+.h6-a {
+  font-family: var(--font-archivo);
+  font-size: 12px;
+  line-height: 24px;
+  letter-spacing: 0.15em;
+  font-weight: 400;
+}
+
+.h7-a {
+  font-family: var(--font-archivo);
+  font-size: 10px;
+  line-height: 10px;
+  letter-spacing: 0.15em;
+  font-weight: 400;
+}
+
+/* ─── Mobile typography overrides ────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  .h1-i { font-size: 36px; line-height: 44px; }
+  .h2-i { font-size: 30px; line-height: 38px; }
+  .h3-i { font-size: 26px; line-height: 34px; }
+  .h4-i { font-size: 20px; line-height: 28px; }
+  .h4-a { font-size: 18px; line-height: 26px; }
+  .h5-i, .h5-a { font-size: 15px; line-height: 22px; }
+  .h6-a { font-size: 11px; line-height: 18px; }
+}
+
+/* ─── Focus ring ──────────────────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid var(--pr-b2);
+  outline-offset: 2px;
+}

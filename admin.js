@@ -1,16 +1,21 @@
 // Rangmudra admin SPA — vanilla ES6 module.
 
 const TOKEN_KEY = 'rangmudra_admin_token';
+// Origin of the backend API (set in config.js). Empty = same origin as this page.
+const API_BASE = ((typeof window !== 'undefined' && window.RANGMUDRA_API_BASE) || '').replace(/\/$/, '');
+const apiUrl = (path) => API_BASE + path;
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || '',
+  email: '',
   tab: 'products',
   products: [],
   workshops: [],
   blogs: [],
   sections: null,
+  admins: [],
   workshopCategoryFilter: 'all',
 };
 
@@ -25,7 +30,7 @@ async function api(method, path, body, isFormData = false) {
   } else if (isFormData) {
     payload = body;
   }
-  const res = await fetch(path, { method, headers, body: payload });
+  const res = await fetch(apiUrl(path), { method, headers, body: payload });
   if (res.status === 401) {
     state.token = '';
     localStorage.removeItem(TOKEN_KEY);
@@ -48,23 +53,30 @@ function showLogin() {
 function showApp() {
   $('#login-screen').hidden = true;
   $('#app-shell').hidden = false;
+  const who = $('#current-admin');
+  if (who) {
+    who.textContent = state.email ? `Signed in as ${state.email}` : '';
+    who.hidden = !state.email;
+  }
   loadAll();
 }
 
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const passcode = $('#login-passcode').value;
+  const email = $('#login-email').value.trim();
+  const password = $('#login-password').value;
   const err = $('#login-error');
   err.hidden = true;
   try {
-    const res = await fetch('/api/admin/login', {
+    const res = await fetch(apiUrl('/api/admin/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ passcode }),
+      body: JSON.stringify({ email, password }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Login failed');
     state.token = data.token;
+    state.email = data.email || email;
     localStorage.setItem(TOKEN_KEY, state.token);
     showApp();
   } catch (e) {
@@ -95,10 +107,10 @@ $$('.admin-tab').forEach((btn) => {
 async function loadAll() {
   try {
     const [products, workshops, blogs, sections] = await Promise.all([
-      fetch('/api/products').then((r) => r.json()),
-      fetch('/api/workshops').then((r) => r.json()),
-      fetch('/api/blogs').then((r) => r.json()),
-      fetch('/api/sections').then((r) => r.json()),
+      fetch(apiUrl('/api/products')).then((r) => r.json()),
+      fetch(apiUrl('/api/workshops')).then((r) => r.json()),
+      fetch(apiUrl('/api/blogs')).then((r) => r.json()),
+      fetch(apiUrl('/api/sections')).then((r) => r.json()),
     ]);
     state.products = products;
     state.workshops = workshops;
@@ -108,6 +120,7 @@ async function loadAll() {
     renderWorkshops();
     renderBlogs();
     renderSections();
+    loadAdmins();
   } catch (e) {
     toast(e.message, true);
   }
@@ -892,6 +905,93 @@ function wireUpload(rootSel) {
   });
 }
 
+// ---------- Admins ----------
+
+async function loadAdmins() {
+  try {
+    state.admins = await api('GET', '/api/admin/admins');
+    renderAdmins();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function renderAdmins() {
+  const wrap = $('#admins-list');
+  if (!wrap) return;
+  if (!state.admins.length) {
+    wrap.innerHTML = emptyState('No admins yet.');
+    return;
+  }
+  wrap.innerHTML = state.admins.map((a) => {
+    const isSelf = a.email === state.email;
+    const meta = [
+      a.createdBy ? `added by ${escapeHtml(a.createdBy)}` : '',
+      a.createdAt ? new Date(a.createdAt).toLocaleDateString() : '',
+    ].filter(Boolean).join(' · ');
+    return `
+      <div class="admin-row">
+        <div>
+          <p class="admin-row__email">${escapeHtml(a.email)}${isSelf ? ' <span class="admin-row__you">you</span>' : ''}</p>
+          ${meta ? `<p class="admin-row__meta">${meta}</p>` : ''}
+        </div>
+        <button class="btn btn--ghost btn--sm" data-del-admin="${escapeAttr(a.email)}"${isSelf ? ' disabled' : ''}>Remove</button>
+      </div>`;
+  }).join('');
+}
+
+$('#admins-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-del-admin]');
+  if (btn && !btn.disabled) confirmDeleteAdmin(btn.dataset.delAdmin);
+});
+
+$('#add-admin-btn').addEventListener('click', () => {
+  openModal('New admin', `
+    <form id="admin-form" class="form" autocomplete="off">
+      <label class="field">
+        <span class="field__label">Email</span>
+        <input type="email" name="email" required placeholder="name@rangmudra.com">
+      </label>
+      <label class="field">
+        <span class="field__label">Password</span>
+        <input type="password" name="password" required minlength="8" placeholder="At least 8 characters">
+      </label>
+      <p style="color:var(--sc-l3);font-size:13px;margin:0;">The new admin signs in with this email and password. Share the credentials securely.</p>
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+        <button type="submit" class="btn btn--primary">Create admin</button>
+      </div>
+    </form>
+  `);
+  $('#admin-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = {
+      email: (fd.get('email') || '').toString().trim(),
+      password: (fd.get('password') || '').toString(),
+    };
+    try {
+      await api('POST', '/api/admin/admins', payload);
+      closeModal();
+      toast('Admin added');
+      loadAdmins();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+});
+
+async function confirmDeleteAdmin(email) {
+  if (!confirm(`Remove admin ${email}? They will no longer be able to sign in.`)) return;
+  try {
+    await api('DELETE', `/api/admin/admins/${encodeURIComponent(email)}`);
+    toast('Admin removed');
+    loadAdmins();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
 // ---------- Modal ----------
 
 function openModal(title, bodyHtml) {
@@ -944,7 +1044,9 @@ function emptyState(msg) {
 
 if (state.token) {
   // verify session is still valid
-  api('GET', '/api/admin/ping').then(showApp).catch(showLogin);
+  api('GET', '/api/admin/ping')
+    .then((data) => { state.email = (data && data.email) || ''; showApp(); })
+    .catch(showLogin);
 } else {
   showLogin();
 }
