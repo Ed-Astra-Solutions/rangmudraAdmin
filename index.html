@@ -45,6 +45,7 @@
         <button class="admin-tab" role="tab" data-tab="workshops" aria-selected="false">Workshops</button>
         <button class="admin-tab" role="tab" data-tab="blogs" aria-selected="false">Blogs</button>
         <button class="admin-tab" role="tab" data-tab="sections" aria-selected="false">Section Images</button>
+        <button class="admin-tab" role="tab" data-tab="discounts" aria-selected="false">Discounts</button>
         <button class="admin-tab" role="tab" data-tab="admins" aria-selected="false">Admins</button>
       </nav>
       <div class="admin-sidebar__footer">
@@ -107,6 +108,18 @@
           </div>
         </div>
         <div id="sections-list"></div>
+      </section>
+
+      <!-- ============== DISCOUNTS ============== -->
+      <section class="panel" data-panel="discounts" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Discount codes</h2>
+            <p class="panel__subtitle">Create coupon codes — percentage off (with an optional cap) or a flat amount off. Customers enter them in the cart.</p>
+          </div>
+          <button class="btn btn--primary" id="add-discount-btn">+ New code</button>
+        </div>
+        <div id="discounts-list"></div>
       </section>
 
       <!-- ============== ADMINS ============== -->

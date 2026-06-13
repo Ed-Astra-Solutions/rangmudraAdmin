@@ -16,6 +16,7 @@ const state = {
   blogs: [],
   sections: null,
   admins: [],
+  discounts: [],
   workshopCategoryFilter: 'all',
 };
 
@@ -121,6 +122,7 @@ async function loadAll() {
     renderBlogs();
     renderSections();
     loadAdmins();
+    loadDiscounts();
   } catch (e) {
     toast(e.message, true);
   }
@@ -903,6 +905,182 @@ function wireUpload(rootSel) {
       toast('Image uploaded');
     } catch (err) { toast(err.message, true); }
   });
+}
+
+// ---------- Discounts ----------
+
+async function loadDiscounts() {
+  try {
+    state.discounts = await api('GET', '/api/admin/discounts');
+    renderDiscounts();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function discountSummary(d) {
+  if (d.type === 'flat') return `₹${d.value} off`;
+  return `${d.value}% off${d.maxDiscount != null ? ` (max ₹${d.maxDiscount})` : ''}`;
+}
+
+function discountStatus(d) {
+  const now = Date.now();
+  if (d.active === false) return { label: 'Disabled', muted: true };
+  if (d.startsAt && now < new Date(d.startsAt).getTime()) return { label: 'Scheduled', muted: true };
+  if (d.expiresAt && now > new Date(d.expiresAt).getTime()) return { label: 'Expired', muted: true };
+  if (d.usageLimit != null && (d.usedCount || 0) >= d.usageLimit) return { label: 'Used up', muted: true };
+  return { label: 'Active', muted: false };
+}
+
+function renderDiscounts() {
+  const wrap = $('#discounts-list');
+  if (!wrap) return;
+  if (!state.discounts.length) {
+    wrap.innerHTML = emptyState('No discount codes yet.');
+    return;
+  }
+  wrap.innerHTML = state.discounts.map((d) => {
+    const status = discountStatus(d);
+    const conditions = [
+      d.minSubtotal != null ? `min order ₹${d.minSubtotal}` : '',
+      d.usageLimit != null ? `${d.usedCount || 0}/${d.usageLimit} used` : `${d.usedCount || 0} used`,
+      d.expiresAt ? `expires ${new Date(d.expiresAt).toLocaleDateString()}` : '',
+    ].filter(Boolean).join(' · ');
+    return `
+      <div class="admin-row">
+        <div>
+          <p class="admin-row__email"><strong>${escapeHtml(d.code)}</strong> — ${escapeHtml(discountSummary(d))}
+            <span class="admin-row__you"${status.muted ? ' style="opacity:.6"' : ''}>${status.label}</span></p>
+          ${conditions ? `<p class="admin-row__meta">${escapeHtml(conditions)}</p>` : ''}
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn--ghost btn--sm" data-edit-discount="${escapeAttr(d.code)}">Edit</button>
+          <button class="btn btn--ghost btn--sm" data-del-discount="${escapeAttr(d.code)}">Remove</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+$('#discounts-list').addEventListener('click', (e) => {
+  const edit = e.target.closest('[data-edit-discount]');
+  if (edit) {
+    const d = state.discounts.find((x) => x.code === edit.dataset.editDiscount);
+    if (d) openDiscountModal(d);
+    return;
+  }
+  const del = e.target.closest('[data-del-discount]');
+  if (del) confirmDeleteDiscount(del.dataset.delDiscount);
+});
+
+$('#add-discount-btn').addEventListener('click', () => openDiscountModal(null));
+
+function openDiscountModal(d) {
+  const isEdit = !!d;
+  const v = d || {};
+  const dateVal = (iso) => (iso ? new Date(iso).toISOString().slice(0, 10) : '');
+  openModal(isEdit ? `Edit ${v.code}` : 'New discount code', `
+    <form id="discount-form" class="form" autocomplete="off">
+      <label class="field">
+        <span class="field__label">Code</span>
+        <input type="text" name="code" required placeholder="WELCOME10" value="${escapeAttr(v.code || '')}"
+          style="text-transform:uppercase;"${isEdit ? ' readonly' : ''}>
+      </label>
+      <label class="field">
+        <span class="field__label">Type</span>
+        <select name="type" id="discount-type">
+          <option value="percent"${v.type !== 'flat' ? ' selected' : ''}>Percentage off (%)</option>
+          <option value="flat"${v.type === 'flat' ? ' selected' : ''}>Flat amount off (₹)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label" id="discount-value-label">Value</span>
+        <input type="number" name="value" required min="1" step="1" placeholder="10" value="${escapeAttr(v.value ?? '')}">
+      </label>
+      <label class="field" id="discount-max-field"${v.type === 'flat' ? ' hidden' : ''}>
+        <span class="field__label">Max discount (₹) — optional cap for %</span>
+        <input type="number" name="maxDiscount" min="1" step="1" placeholder="e.g. 500" value="${escapeAttr(v.maxDiscount ?? '')}">
+      </label>
+      <label class="field">
+        <span class="field__label">Minimum order (₹) — optional</span>
+        <input type="number" name="minSubtotal" min="0" step="1" placeholder="e.g. 1500" value="${escapeAttr(v.minSubtotal ?? '')}">
+      </label>
+      <label class="field">
+        <span class="field__label">Usage limit — optional (total redemptions)</span>
+        <input type="number" name="usageLimit" min="1" step="1" placeholder="Unlimited if blank" value="${escapeAttr(v.usageLimit ?? '')}">
+      </label>
+      <div style="display:flex;gap:16px;">
+        <label class="field" style="flex:1;">
+          <span class="field__label">Starts — optional</span>
+          <input type="date" name="startsAt" value="${dateVal(v.startsAt)}">
+        </label>
+        <label class="field" style="flex:1;">
+          <span class="field__label">Expires — optional</span>
+          <input type="date" name="expiresAt" value="${dateVal(v.expiresAt)}">
+        </label>
+      </div>
+      <label class="field" style="flex-direction:row;align-items:center;gap:8px;">
+        <input type="checkbox" name="active" ${v.active === false ? '' : 'checked'} style="width:auto;">
+        <span class="field__label" style="margin:0;">Active (customers can use this code)</span>
+      </label>
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+        <button type="submit" class="btn btn--primary">${isEdit ? 'Save changes' : 'Create code'}</button>
+      </div>
+    </form>
+  `);
+
+  // Hide the % cap field when "flat" is selected.
+  const typeSel = $('#discount-type');
+  const maxField = $('#discount-max-field');
+  const valueLabel = $('#discount-value-label');
+  const syncType = () => {
+    const flat = typeSel.value === 'flat';
+    maxField.hidden = flat;
+    valueLabel.textContent = flat ? 'Value (₹)' : 'Value (%)';
+  };
+  typeSel.addEventListener('change', syncType);
+  syncType();
+
+  $('#discount-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const str = (k) => (fd.get(k) || '').toString().trim();
+    const payload = {
+      code: str('code').toUpperCase(),
+      type: str('type'),
+      value: str('value'),
+      maxDiscount: str('maxDiscount'),
+      minSubtotal: str('minSubtotal'),
+      usageLimit: str('usageLimit'),
+      startsAt: str('startsAt'),
+      expiresAt: str('expiresAt'),
+      active: fd.get('active') != null,
+    };
+    try {
+      if (isEdit) {
+        await api('PUT', `/api/admin/discounts/${encodeURIComponent(v.code)}`, payload);
+        toast('Discount updated');
+      } else {
+        await api('POST', '/api/admin/discounts', payload);
+        toast('Discount created');
+      }
+      closeModal();
+      loadDiscounts();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+}
+
+async function confirmDeleteDiscount(code) {
+  if (!confirm(`Remove discount code ${code}? Customers will no longer be able to use it.`)) return;
+  try {
+    await api('DELETE', `/api/admin/discounts/${encodeURIComponent(code)}`);
+    toast('Discount removed');
+    loadDiscounts();
+  } catch (e) {
+    toast(e.message, true);
+  }
 }
 
 // ---------- Admins ----------
