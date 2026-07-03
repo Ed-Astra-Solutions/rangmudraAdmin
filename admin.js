@@ -17,6 +17,10 @@ const state = {
   sections: null,
   admins: [],
   discounts: [],
+  orders: [],
+  orderStatusFilter: 'all',
+  gallery: [],
+  gallerySearch: '',
   workshopCategoryFilter: 'all',
 };
 
@@ -122,7 +126,10 @@ async function loadAll() {
     renderBlogs();
     renderSections();
     loadAdmins();
+    loadSale();
     loadDiscounts();
+    loadOrders();
+    loadGallery();
   } catch (e) {
     toast(e.message, true);
   }
@@ -183,6 +190,7 @@ function openProductModal(product) {
         <div class="upload__preview" style="${p.images[0] ? `background-image:url('${p.images[0]}')` : ''}">${p.images[0] ? '' : 'No image'}</div>
         <div class="upload__btns">
           <button type="button" class="btn btn--ghost btn--sm" data-upload-trigger>Upload image</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-upload-pick>Choose from gallery</button>
           ${p.images[0] ? '<button type="button" class="btn btn--danger btn--sm" data-upload-clear>Clear</button>' : ''}
         </div>
         <input type="file" accept="image/*" class="upload__input">
@@ -384,6 +392,7 @@ function openWorkshopModal(workshop) {
         <div class="upload__preview" style="${w.image ? `background-image:url('${w.image}')` : ''}">${w.image ? '' : 'No image'}</div>
         <div class="upload__btns">
           <button type="button" class="btn btn--ghost btn--sm" data-upload-trigger>Upload image</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-upload-pick>Choose from gallery</button>
           ${w.image ? '<button type="button" class="btn btn--danger btn--sm" data-upload-clear>Clear</button>' : ''}
         </div>
         <input type="file" accept="image/*" class="upload__input">
@@ -639,6 +648,7 @@ function openBlogModal(blog) {
         <div class="upload__preview" style="${b.image ? `background-image:url('${b.image}')` : ''}">${b.image ? '' : 'No image'}</div>
         <div class="upload__btns">
           <button type="button" class="btn btn--ghost btn--sm" data-upload-trigger>Upload image</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-upload-pick>Choose from gallery</button>
           ${b.image ? '<button type="button" class="btn btn--danger btn--sm" data-upload-clear>Clear</button>' : ''}
         </div>
         <input type="file" accept="image/*" class="upload__input">
@@ -837,6 +847,7 @@ function renderSections() {
             </div>
             <div class="slot__actions">
               <button class="btn btn--gold btn--sm btn--block" data-action="replace-section" data-page="${pageKey}" data-slot="${slotKey}">Replace image</button>
+              <button class="btn btn--ghost btn--sm btn--block" data-action="pick-section" data-page="${pageKey}" data-slot="${slotKey}">Choose from gallery</button>
             </div>
           </div>
         `;
@@ -851,6 +862,18 @@ function renderSections() {
 }
 
 $('#sections-list').addEventListener('click', async (e) => {
+  const pickBtn = e.target.closest('[data-action="pick-section"]');
+  if (pickBtn) {
+    const { page, slot } = pickBtn.dataset;
+    openGalleryPicker({ onSelect: async (item) => {
+      try {
+        await api('PUT', `/api/admin/sections/${page}/${slot}`, { url: item.url });
+        toast('Section image updated');
+        loadAll();
+      } catch (err) { toast(err.message, true); }
+    } });
+    return;
+  }
   const btn = e.target.closest('[data-action="replace-section"]');
   if (!btn) return;
   const { page, slot } = btn.dataset;
@@ -872,6 +895,8 @@ $('#sections-list').addEventListener('click', async (e) => {
 
 // ---------- Upload helper ----------
 
+// Upload bytes only. Every upload auto-registers into the gallery library on the
+// backend; here we just need the returned URL for the field being edited.
 async function uploadFile(file) {
   const fd = new FormData();
   fd.append('file', file);
@@ -879,16 +904,48 @@ async function uploadFile(file) {
   return res.url;
 }
 
+// Upload with metadata (used by the Gallery tab's own upload form). Returns the
+// full { url, id, item } response so the caller gets the created library record.
+async function uploadImage(file, meta = {}) {
+  const fd = new FormData();
+  fd.append('file', file);
+  Object.entries(meta).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') fd.append(k, v);
+  });
+  return api('POST', '/api/admin/upload', fd, true);
+}
+
+// Read an image's intrinsic dimensions in the browser (for CLS + SEO metadata).
+function readImageDims(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => { URL.revokeObjectURL(url); resolve({ width: img.naturalWidth, height: img.naturalHeight }); };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ width: null, height: null }); };
+    img.src = url;
+  });
+}
+
 function wireUpload(rootSel) {
   const root = $(rootSel);
   if (!root) return;
   const trigger = $('[data-upload-trigger]', root);
+  const pick = $('[data-upload-pick]', root);
   const clear = $('[data-upload-clear]', root);
   const fileInput = $('.upload__input', root);
   const preview = $('.upload__preview', root);
   const hidden = $('input[type="hidden"]', root);
 
+  const setImage = (url) => {
+    hidden.value = url;
+    preview.style.backgroundImage = `url('${url}')`;
+    preview.textContent = '';
+  };
+
   trigger?.addEventListener('click', () => fileInput.click());
+  pick?.addEventListener('click', () => {
+    openGalleryPicker({ onSelect: (item) => { setImage(item.url); toast('Image selected'); } });
+  });
   clear?.addEventListener('click', () => {
     hidden.value = '';
     preview.style.backgroundImage = '';
@@ -899,13 +956,277 @@ function wireUpload(rootSel) {
     if (!file) return;
     try {
       const url = await uploadFile(file);
-      hidden.value = url;
-      preview.style.backgroundImage = `url('${url}')`;
-      preview.textContent = '';
-      toast('Image uploaded');
+      setImage(url);
+      toast('Image uploaded to library');
     } catch (err) { toast(err.message, true); }
   });
 }
+
+// ---------- Gallery (central media library) ----------
+
+async function loadGallery() {
+  try {
+    state.gallery = await api('GET', '/api/admin/gallery');
+    renderGallery();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function galleryMatches(g, q) {
+  if (!q) return true;
+  const hay = [g.title, g.description, (g.tags || []).join(' ')].join(' ').toLowerCase();
+  return hay.includes(q);
+}
+
+function renderGallery() {
+  const grid = $('#gallery-grid');
+  if (!grid) return;
+  const q = state.gallerySearch.trim().toLowerCase();
+  const items = state.gallery.filter((g) => galleryMatches(g, q));
+  if (!items.length) {
+    grid.innerHTML = emptyState(state.gallery.length
+      ? 'No images match your search.'
+      : 'No images yet. Click <strong>+ Upload image</strong> to add one to the library.');
+    return;
+  }
+  grid.innerHTML = items.map((g) => `
+    <div class="card">
+      <div class="card__img" style="${g.url ? `background-image:url('${escapeAttr(g.url)}')` : ''}">
+        <span class="card__tag ${g.public ? 'card__tag--public' : 'card__tag--private'}">${g.public ? 'Public' : 'Private'}</span>
+      </div>
+      <div class="card__body">
+        <h3 class="card__title">${escapeHtml(g.title)}</h3>
+        <p class="card__meta">${escapeHtml((g.tags || []).join(' · ')) || '—'}</p>
+      </div>
+      <div class="card__actions">
+        <button class="btn btn--ghost btn--sm" data-gallery-edit="${g.id}">Edit</button>
+        <button class="btn btn--danger btn--sm" data-gallery-del="${g.id}">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+$('#gallery-admin-search')?.addEventListener('input', (e) => {
+  state.gallerySearch = e.target.value;
+  renderGallery();
+});
+
+$('#gallery-grid')?.addEventListener('click', (e) => {
+  const editBtn = e.target.closest('[data-gallery-edit]');
+  const delBtn = e.target.closest('[data-gallery-del]');
+  if (editBtn) openGalleryForm(state.gallery.find((g) => g.id === editBtn.dataset.galleryEdit));
+  if (delBtn) confirmDeleteGallery(delBtn.dataset.galleryDel);
+});
+
+$('#add-gallery-btn')?.addEventListener('click', () => openGalleryForm(null));
+
+// New = upload form (file required). Edit = metadata only (delete + re-upload to
+// change the image). Both flows keep a single library record per image.
+function openGalleryForm(item) {
+  const isEdit = !!item;
+  const g = item || { title: '', description: '', alt: '', tags: [], public: false };
+  openModal(isEdit ? `Edit — ${g.title}` : 'Upload image', `
+    <form id="gallery-form" class="form-grid" autocomplete="off">
+      ${isEdit ? `
+        <div class="upload">
+          <div class="upload__preview" style="background-image:url('${escapeAttr(g.url)}')"></div>
+        </div>
+      ` : `
+        <label class="field">
+          <span class="field__label">Image file</span>
+          <input type="file" accept="image/*" name="file" id="gallery-file" required>
+        </label>
+      `}
+      <label class="field">
+        <span class="field__label">Title</span>
+        <input name="title" required value="${escapeAttr(g.title)}">
+      </label>
+      <label class="field">
+        <span class="field__label">Description (shown on the image's SEO page)</span>
+        <textarea name="description">${escapeHtml(g.description || '')}</textarea>
+      </label>
+      <label class="field">
+        <span class="field__label">Alt text (accessibility — defaults to the title)</span>
+        <input name="alt" value="${escapeAttr(g.alt || '')}">
+      </label>
+      <label class="field">
+        <span class="field__label">Tags (comma-separated, e.g. indigo, saree, ajrakh)</span>
+        <input name="tags" value="${escapeAttr((g.tags || []).join(', '))}">
+      </label>
+      <div class="checkbox-row">
+        <input type="checkbox" id="g-public" name="public" ${g.public ? 'checked' : ''}>
+        <label for="g-public">Public — show in the consumer design gallery</label>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+        <button type="submit" class="btn btn--primary">${isEdit ? 'Save changes' : 'Upload'}</button>
+      </div>
+    </form>
+  `);
+
+  $('#gallery-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const meta = {
+      title: (fd.get('title') || '').toString().trim(),
+      description: (fd.get('description') || '').toString().trim(),
+      alt: (fd.get('alt') || '').toString().trim(),
+      tags: splitCSV(fd.get('tags')).join(','),
+      public: fd.get('public') ? 'true' : 'false',
+    };
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      if (isEdit) {
+        await api('PUT', `/api/admin/gallery/${item.id}`, { ...meta, public: meta.public === 'true' });
+        toast('Image updated');
+      } else {
+        const file = $('#gallery-file').files[0];
+        if (!file) { toast('Choose an image file', true); submitBtn.disabled = false; return; }
+        const dims = await readImageDims(file);
+        await uploadImage(file, { ...meta, width: dims.width || '', height: dims.height || '' });
+        toast('Image uploaded to library');
+      }
+      closeModal();
+      loadGallery();
+    } catch (err) {
+      toast(err.message, true);
+      submitBtn.disabled = false;
+    }
+  });
+}
+
+function confirmDeleteGallery(id) {
+  const g = state.gallery.find((x) => x.id === id);
+  openModal('Delete image', `
+    <p style="color:var(--sc-l3);margin-bottom:24px;">Remove <strong>${escapeHtml(g ? g.title : 'this image')}</strong> from the library? This does not delete the underlying file, and any product still using its URL keeps working.</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+      <button type="button" class="btn btn--danger" id="confirm-del-gallery">Delete</button>
+    </div>
+  `);
+  $('#confirm-del-gallery').addEventListener('click', async () => {
+    try {
+      await api('DELETE', `/api/admin/gallery/${id}`);
+      toast('Image removed');
+      closeModal();
+      loadGallery();
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+// ---------- Gallery picker (reused by every image field) ----------
+
+let pickerOnSelect = null;
+
+function openGalleryPicker({ onSelect }) {
+  pickerOnSelect = onSelect;
+  $('#picker-search').value = '';
+  renderPicker('');
+  $('#picker-backdrop').hidden = false;
+  // Load fresh if the library hasn't been fetched yet.
+  if (!state.gallery.length) loadGallery().then(() => renderPicker($('#picker-search').value.trim().toLowerCase()));
+  setTimeout(() => $('#picker-search').focus(), 0);
+}
+
+function closePicker() {
+  $('#picker-backdrop').hidden = true;
+  pickerOnSelect = null;
+}
+
+function renderPicker(q) {
+  const grid = $('#picker-grid');
+  const items = state.gallery.filter((g) => galleryMatches(g, q));
+  if (!items.length) {
+    grid.innerHTML = `<p class="picker-empty">${state.gallery.length ? 'No images match.' : 'The library is empty — upload an image from the Gallery tab first.'}</p>`;
+    return;
+  }
+  grid.innerHTML = items.map((g) => `
+    <div class="picker-item" style="background-image:url('${escapeAttr(g.url)}')" data-pick="${g.id}" title="${escapeAttr(g.title)}">
+      <span class="picker-item__label">${escapeHtml(g.title)}</span>
+    </div>
+  `).join('');
+}
+
+$('#picker-search')?.addEventListener('input', (e) => renderPicker(e.target.value.trim().toLowerCase()));
+$('#picker-close')?.addEventListener('click', closePicker);
+$('#picker-backdrop')?.addEventListener('click', (e) => {
+  if (e.target === $('#picker-backdrop')) closePicker();
+  const item = e.target.closest('[data-pick]');
+  if (item) {
+    const g = state.gallery.find((x) => x.id === item.dataset.pick);
+    if (g && pickerOnSelect) pickerOnSelect(g);
+    closePicker();
+  }
+});
+
+// ---------- Store-wide sale ----------
+
+// Convert a stored ISO timestamp to a value a <input type="datetime-local">
+// accepts ('YYYY-MM-DDTHH:mm' in the admin's local time).
+function toLocalInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function renderSaleStatus(sale) {
+  const el = $('#sale-status');
+  if (!el) return;
+  const now = Date.now();
+  const live = !!(sale && sale.active && Number(sale.percent) > 0 &&
+    (!sale.startsAt || now >= new Date(sale.startsAt).getTime()) &&
+    (!sale.endsAt || now <= new Date(sale.endsAt).getTime()));
+  const scheduled = !!(sale && sale.active && Number(sale.percent) > 0 && !live);
+  el.textContent = live ? `Live — ${sale.percent}% off` : scheduled ? 'Scheduled' : 'Off';
+  el.classList.toggle('is-live', live);
+  el.classList.toggle('is-scheduled', scheduled);
+}
+
+async function loadSale() {
+  try {
+    const sale = (await api('GET', '/api/admin/sale')) || {};
+    state.sale = sale;
+    $('#sale-active').checked = sale.active === true;
+    $('#sale-percent').value = sale.percent || '';
+    $('#sale-max').value = sale.maxDiscount ?? '';
+    $('#sale-label').value = sale.label || '';
+    $('#sale-banner-text').value = sale.bannerText || '';
+    $('#sale-starts').value = toLocalInput(sale.startsAt);
+    $('#sale-ends').value = toLocalInput(sale.endsAt);
+    renderSaleStatus(sale);
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+$('#sale-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const num = (v) => (v !== '' && v != null && !Number.isNaN(Number(v)) ? Number(v) : null);
+  const percent = num($('#sale-percent').value);
+  const active = $('#sale-active').checked;
+  if (active && !(percent > 0)) { toast('Enter a percent greater than 0 to make the sale live', true); return; }
+  const payload = {
+    active,
+    percent: percent || 0,
+    maxDiscount: num($('#sale-max').value),
+    label: $('#sale-label').value.trim(),
+    bannerText: $('#sale-banner-text').value.trim(),
+    startsAt: $('#sale-starts').value || null,
+    endsAt: $('#sale-ends').value || null,
+  };
+  try {
+    const saved = await api('PUT', '/api/admin/sale', payload);
+    state.sale = saved;
+    renderSaleStatus(saved);
+    toast(saved.live ? 'Store-wide sale is live' : 'Sale settings saved');
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
 
 // ---------- Discounts ----------
 
@@ -1078,6 +1399,294 @@ async function confirmDeleteDiscount(code) {
     await api('DELETE', `/api/admin/discounts/${encodeURIComponent(code)}`);
     toast('Discount removed');
     loadDiscounts();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+// ---------- Orders ----------
+
+const ORDER_STATUS_META = {
+  created:   { label: 'Unpaid',    cls: 'ostatus--created' },
+  paid:      { label: 'Paid',      cls: 'ostatus--paid' },
+  shipped:   { label: 'Shipped',   cls: 'ostatus--shipped' },
+  delivered: { label: 'Delivered', cls: 'ostatus--delivered' },
+  cancelled: { label: 'Cancelled', cls: 'ostatus--cancelled' },
+  failed:    { label: 'Failed',    cls: 'ostatus--failed' },
+  signature_failed: { label: 'Failed', cls: 'ostatus--failed' },
+};
+const ORDER_STATUS_OPTS = ['created', 'paid', 'shipped', 'delivered', 'cancelled', 'failed'];
+
+const money = (n) => '₹' + (Number(n) || 0).toLocaleString('en-IN');
+function orderDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function statusBadge(status) {
+  const m = ORDER_STATUS_META[status] || { label: status || '—', cls: '' };
+  return `<span class="ostatus ${m.cls}">${escapeHtml(m.label)}</span>`;
+}
+
+async function loadOrders() {
+  try {
+    state.orders = await api('GET', '/api/admin/orders');
+    state.orders.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    renderOrders();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function renderOrders() {
+  const wrap = $('#orders-list');
+  if (!wrap) return;
+  const f = state.orderStatusFilter;
+  const list = f === 'all' ? state.orders : state.orders.filter((o) => o.status === f);
+  if (!list.length) {
+    wrap.innerHTML = emptyState(state.orders.length ? 'No orders match this filter.' : 'No orders yet. Create one with “+ New order”.');
+    return;
+  }
+  wrap.innerHTML = list.map((o) => {
+    const itemCount = (o.items || []).reduce((n, i) => n + (i.qty || 1), 0);
+    const who = o.customerName ? `${escapeHtml(o.customerName)} · ${escapeHtml(o.email || '—')}` : escapeHtml(o.email || '—');
+    const hasLink = o.paymentLink && o.paymentLink.shortUrl && o.status !== 'paid';
+    const link = hasLink ? `· <a class="order-link" href="${escapeAttr(o.paymentLink.shortUrl)}" target="_blank" rel="noopener">payment link ↗</a>` : '';
+    const manual = o.source === 'manual' ? '<span class="order-tag">Manual</span>' : '';
+    return `
+      <div class="admin-row order-row">
+        <div class="order-row__main">
+          <p class="order-row__title"><strong>${money(o.amount)}</strong> ${statusBadge(o.status)} ${manual}</p>
+          <p class="admin-row__meta">${who} · ${itemCount} item${itemCount === 1 ? '' : 's'} · ${escapeHtml(orderDate(o.createdAt))} · <span class="order-id">${escapeHtml(o.id)}</span> ${link}</p>
+        </div>
+        <div class="order-row__actions">
+          <button class="btn btn--ghost btn--sm" data-edit-order="${escapeAttr(o.id)}">View / Edit</button>
+          ${o.status !== 'paid' ? `<button class="btn btn--ghost btn--sm" data-link-order="${escapeAttr(o.id)}">Payment link</button>` : ''}
+          <button class="btn btn--ghost btn--sm" data-del-order="${escapeAttr(o.id)}">Delete</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+$('#orders-list').addEventListener('click', (e) => {
+  const edit = e.target.closest('[data-edit-order]');
+  if (edit) { const o = state.orders.find((x) => x.id === edit.dataset.editOrder); if (o) openOrderModal(o); return; }
+  const link = e.target.closest('[data-link-order]');
+  if (link) { generatePaymentLink(link.dataset.linkOrder, link); return; }
+  const del = e.target.closest('[data-del-order]');
+  if (del) confirmDeleteOrder(del.dataset.delOrder);
+});
+
+$$('#order-status-filter .chip').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    state.orderStatusFilter = chip.dataset.status;
+    $$('#order-status-filter .chip').forEach((c) => c.classList.toggle('active', c === chip));
+    renderOrders();
+  });
+});
+
+$('#add-order-btn').addEventListener('click', () => openOrderModal(null));
+
+function orderItemRowHtml(it = {}) {
+  return `
+    <div class="oitem" data-oitem>
+      <input class="oitem__name" type="text" placeholder="Item name" value="${escapeAttr(it.name || '')}">
+      <input class="oitem__size" type="text" placeholder="Size" value="${escapeAttr(it.size || '')}">
+      <input class="oitem__qty" type="number" min="1" step="1" placeholder="Qty" value="${escapeAttr(it.qty || 1)}">
+      <input class="oitem__price" type="number" min="0" step="1" placeholder="Unit ₹" value="${escapeAttr(it.price ?? '')}">
+      <button type="button" class="oitem__del" title="Remove item" data-oitem-del aria-label="Remove item">×</button>
+    </div>`;
+}
+
+function collectOrderItems() {
+  return $$('#oitems [data-oitem]').map((row) => ({
+    name: row.querySelector('.oitem__name').value.trim(),
+    size: row.querySelector('.oitem__size').value.trim(),
+    qty: parseInt(row.querySelector('.oitem__qty').value, 10) || 1,
+    price: Math.max(0, Math.round(Number(row.querySelector('.oitem__price').value) || 0)),
+  })).filter((it) => it.name);
+}
+
+function openOrderModal(o) {
+  const isEdit = !!o;
+  const v = o || {};
+  const addr = v.address || {};
+  const items = (v.items && v.items.length) ? v.items : [{}];
+  const taxPct = v.taxRate != null ? +(v.taxRate * 100).toFixed(2) : 8;
+  const catalogueOpts = (state.products || [])
+    .map((p) => `<option value="${escapeAttr(p.id)}">${escapeAttr(p.name)} — ₹${p.price}</option>`).join('');
+  openModal(isEdit ? `Order ${v.id}` : 'New order', `
+    <form id="order-form" class="form" autocomplete="off">
+      ${isEdit ? `<p class="order-modal__meta">${statusBadge(v.status)} · Created ${escapeHtml(orderDate(v.createdAt))}${v.source === 'manual' ? ' · Manual order' : ' · Store order'}</p>` : ''}
+      <div class="form-grid-2">
+        <label class="field"><span class="field__label">Customer email *</span>
+          <input type="email" name="email" required value="${escapeAttr(v.email || '')}" placeholder="customer@example.com"></label>
+        <label class="field"><span class="field__label">Customer name</span>
+          <input type="text" name="customerName" value="${escapeAttr(v.customerName || '')}" placeholder="Optional"></label>
+      </div>
+
+      <div class="field">
+        <span class="field__label">Items</span>
+        <div id="oitems">${items.map(orderItemRowHtml).join('')}</div>
+        <div class="oitems__tools">
+          <button type="button" class="btn btn--ghost btn--sm" id="oitem-add">+ Add item</button>
+          ${catalogueOpts ? `<select id="oitem-catalogue" class="oitem-catalogue"><option value="">Add from catalogue…</option>${catalogueOpts}</select>` : ''}
+        </div>
+      </div>
+
+      <div class="form-grid-3">
+        <label class="field"><span class="field__label">Discount ₹</span>
+          <input type="number" name="discount" min="0" step="1" value="${escapeAttr(v.discount || 0)}"></label>
+        <label class="field"><span class="field__label">Delivery ₹</span>
+          <input type="number" name="deliveryFee" min="0" step="1" value="${escapeAttr(v.deliveryFee ?? 99)}"></label>
+        <label class="field"><span class="field__label">Tax %</span>
+          <input type="number" name="taxRate" min="0" step="0.01" value="${escapeAttr(taxPct)}"></label>
+      </div>
+
+      <div class="order-totals" id="order-totals"></div>
+
+      <label class="field"><span class="field__label">Status</span>
+        <select name="status">
+          ${ORDER_STATUS_OPTS.map((s) => `<option value="${s}"${(v.status || 'created') === s ? ' selected' : ''}>${ORDER_STATUS_META[s].label}</option>`).join('')}
+        </select>
+      </label>
+
+      <details class="order-details"${(addr.line1 || addr.address || v.tracking) ? ' open' : ''}>
+        <summary>Delivery address &amp; tracking</summary>
+        <div class="form-grid-2">
+          <label class="field"><span class="field__label">Name</span><input type="text" name="addr_name" value="${escapeAttr(addr.name || addr.title || '')}"></label>
+          <label class="field"><span class="field__label">Address / line 1</span><input type="text" name="addr_line1" value="${escapeAttr(addr.line1 || addr.address || '')}"></label>
+        </div>
+        <label class="field"><span class="field__label">Line 2</span><input type="text" name="addr_line2" value="${escapeAttr(addr.line2 || '')}"></label>
+        <div class="form-grid-3">
+          <label class="field"><span class="field__label">City</span><input type="text" name="addr_city" value="${escapeAttr(addr.city || '')}"></label>
+          <label class="field"><span class="field__label">State</span><input type="text" name="addr_state" value="${escapeAttr(addr.state || '')}"></label>
+          <label class="field"><span class="field__label">Pincode</span><input type="text" name="addr_pincode" value="${escapeAttr(addr.pincode || '')}"></label>
+        </div>
+        <div class="form-grid-2">
+          <label class="field"><span class="field__label">Tracking carrier</span><input type="text" name="track_carrier" value="${escapeAttr((v.tracking && v.tracking.carrier) || '')}"></label>
+          <label class="field"><span class="field__label">Tracking number</span><input type="text" name="track_number" value="${escapeAttr((v.tracking && v.tracking.number) || '')}"></label>
+        </div>
+      </details>
+
+      <label class="field"><span class="field__label">Internal notes</span>
+        <textarea name="notes" rows="2" placeholder="Not shown to the customer">${escapeHtml(v.notes || '')}</textarea></label>
+
+      ${isEdit ? `
+      <div class="order-paylink" id="order-paylink">
+        ${v.paymentLink && v.paymentLink.shortUrl && v.status !== 'paid'
+          ? `<p class="order-paylink__has">Payment link: <a href="${escapeAttr(v.paymentLink.shortUrl)}" target="_blank" rel="noopener">${escapeHtml(v.paymentLink.shortUrl)}</a></p>` : ''}
+        ${v.status === 'paid' ? '<p class="order-paylink__paid">✓ This order is paid.</p>'
+          : `<button type="button" class="btn btn--ghost btn--sm" id="order-genlink">${v.paymentLink ? 'Copy payment link' : 'Generate payment link'}</button>`}
+      </div>` : ''}
+
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+        <button type="submit" class="btn btn--primary">${isEdit ? 'Save changes' : 'Create order'}</button>
+      </div>
+    </form>
+  `);
+
+  const form = $('#order-form');
+  const itemsWrap = $('#oitems');
+
+  const recalc = () => {
+    const its = collectOrderItems();
+    const subtotal = its.reduce((s, i) => s + i.price * i.qty, 0);
+    const el = (n) => form.elements[n];
+    const discount = Math.min(subtotal, Math.max(0, Number(el('discount').value) || 0));
+    const deliveryFee = Math.max(0, Number(el('deliveryFee').value) || 0);
+    const rate = Math.max(0, Number(el('taxRate').value) || 0) / 100;
+    const tax = Math.round((subtotal - discount) * rate);
+    const total = subtotal - discount + tax + deliveryFee;
+    $('#order-totals').innerHTML = `
+      <div class="ot-row"><span>Subtotal</span><span>${money(subtotal)}</span></div>
+      ${discount ? `<div class="ot-row"><span>Discount</span><span>-${money(discount)}</span></div>` : ''}
+      <div class="ot-row"><span>Tax</span><span>${money(tax)}</span></div>
+      <div class="ot-row"><span>Delivery</span><span>${money(deliveryFee)}</span></div>
+      <div class="ot-row ot-row--total"><span>Total</span><span>${money(total)}</span></div>`;
+  };
+
+  $('#oitem-add').addEventListener('click', () => { itemsWrap.insertAdjacentHTML('beforeend', orderItemRowHtml()); recalc(); });
+  const cat = $('#oitem-catalogue');
+  if (cat) cat.addEventListener('change', () => {
+    const p = (state.products || []).find((x) => x.id === cat.value);
+    if (p) { itemsWrap.insertAdjacentHTML('beforeend', orderItemRowHtml({ name: p.name, price: p.price, qty: 1 })); recalc(); }
+    cat.value = '';
+  });
+  itemsWrap.addEventListener('click', (e) => {
+    const del = e.target.closest('[data-oitem-del]');
+    if (!del) return;
+    if ($$('#oitems [data-oitem]').length > 1) del.closest('[data-oitem]').remove();
+    else toast('An order needs at least one item', true);
+    recalc();
+  });
+  form.addEventListener('input', recalc);
+  recalc();
+
+  const genBtn = $('#order-genlink');
+  if (genBtn) genBtn.addEventListener('click', () => generatePaymentLink(v.id, genBtn));
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const its = collectOrderItems();
+    if (!its.length) { toast('Add at least one line item', true); return; }
+    const g = (n) => (form.elements[n] ? form.elements[n].value.trim() : '');
+    const address = { name: g('addr_name'), line1: g('addr_line1'), line2: g('addr_line2'), city: g('addr_city'), state: g('addr_state'), pincode: g('addr_pincode') };
+    const tracking = { carrier: g('track_carrier'), number: g('track_number') };
+    const payload = {
+      email: g('email'),
+      customerName: g('customerName'),
+      items: its,
+      discount: Number(form.elements.discount.value) || 0,
+      deliveryFee: Number(form.elements.deliveryFee.value) || 0,
+      taxRate: Number(form.elements.taxRate.value) || 0,
+      status: form.elements.status.value,
+      address: Object.values(address).some(Boolean) ? address : null,
+      tracking: Object.values(tracking).some(Boolean) ? tracking : null,
+      notes: g('notes'),
+    };
+    try {
+      if (isEdit) { await api('PUT', `/api/admin/orders/${encodeURIComponent(v.id)}`, payload); toast('Order updated'); }
+      else { await api('POST', '/api/admin/orders', payload); toast('Order created'); }
+      closeModal();
+      loadOrders();
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+async function generatePaymentLink(id, btn) {
+  const original = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+  try {
+    const res = await api('POST', `/api/admin/orders/${encodeURIComponent(id)}/payment-link`);
+    const url = res.paymentLink && res.paymentLink.shortUrl;
+    if (!url) { toast('Could not create a payment link', true); return; }
+    let copied = false;
+    try { await navigator.clipboard.writeText(url); copied = true; } catch (_) {}
+    toast(copied ? 'Payment link copied to clipboard' : 'Payment link ready');
+    const o = state.orders.find((x) => x.id === id);
+    if (o) o.paymentLink = res.paymentLink;
+    const box = $('#order-paylink');
+    if (box) {
+      box.querySelector('.order-paylink__has')?.remove();
+      box.insertAdjacentHTML('afterbegin', `<p class="order-paylink__has">Payment link: <a href="${escapeAttr(url)}" target="_blank" rel="noopener">${escapeHtml(url)}</a></p>`);
+      const b = box.querySelector('#order-genlink');
+      if (b) b.textContent = 'Copy payment link';
+    }
+    renderOrders();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
+}
+
+async function confirmDeleteOrder(id) {
+  if (!confirm(`Delete order ${id}? This can't be undone.`)) return;
+  try {
+    await api('DELETE', `/api/admin/orders/${encodeURIComponent(id)}`);
+    toast('Order deleted');
+    loadOrders();
   } catch (e) {
     toast(e.message, true);
   }

@@ -10,4 +10,11 @@
 // NOTE: GitHub Pages is served over HTTPS, so the API base MUST be https://
 // (a plain http:// EC2 endpoint will be blocked by the browser as mixed content).
 // The backend must also list this page's origin in its CORS_ORIGINS env var.
-window.RANGMUDRA_API_BASE = 'https://api.rangmudra.com';
+//
+// LOCAL DEV: when the admin is opened on localhost/127.0.0.1, talk to the local
+// backend (same-origin) instead of the AWS API, so you never hit prod by mistake.
+(function () {
+  var host = (typeof location !== 'undefined' && location.hostname) || '';
+  var isLocal = host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '';
+  window.RANGMUDRA_API_BASE = isLocal ? '' : 'https://api.rangmudra.com';
+})();

@@ -42,9 +42,11 @@
       </div>
       <nav class="admin-nav" role="tablist" aria-label="Admin sections">
         <button class="admin-tab" role="tab" data-tab="products" aria-selected="true">Products</button>
+        <button class="admin-tab" role="tab" data-tab="orders" aria-selected="false">Orders</button>
         <button class="admin-tab" role="tab" data-tab="workshops" aria-selected="false">Workshops</button>
         <button class="admin-tab" role="tab" data-tab="blogs" aria-selected="false">Blogs</button>
         <button class="admin-tab" role="tab" data-tab="sections" aria-selected="false">Section Images</button>
+        <button class="admin-tab" role="tab" data-tab="gallery" aria-selected="false">Gallery</button>
         <button class="admin-tab" role="tab" data-tab="discounts" aria-selected="false">Discounts</button>
         <button class="admin-tab" role="tab" data-tab="admins" aria-selected="false">Admins</button>
       </nav>
@@ -67,6 +69,26 @@
           <button class="btn btn--primary" id="add-product-btn">+ New product</button>
         </div>
         <div class="grid grid--3" id="products-grid"></div>
+      </section>
+
+      <!-- ============== ORDERS ============== -->
+      <section class="panel" data-panel="orders" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Orders</h2>
+            <p class="panel__subtitle">View e-commerce orders, update fulfilment, edit details, or create an order manually and send a payment link.</p>
+          </div>
+          <button class="btn btn--primary" id="add-order-btn">+ New order</button>
+        </div>
+        <div class="filter-row" id="order-status-filter">
+          <button class="chip active" data-status="all">All</button>
+          <button class="chip" data-status="created">Unpaid</button>
+          <button class="chip" data-status="paid">Paid</button>
+          <button class="chip" data-status="shipped">Shipped</button>
+          <button class="chip" data-status="delivered">Delivered</button>
+          <button class="chip" data-status="cancelled">Cancelled</button>
+        </div>
+        <div id="orders-list"></div>
       </section>
 
       <!-- ============== WORKSHOPS ============== -->
@@ -110,9 +132,75 @@
         <div id="sections-list"></div>
       </section>
 
+      <!-- ============== GALLERY ============== -->
+      <section class="panel" data-panel="gallery" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Gallery</h2>
+            <p class="panel__subtitle">The central media library. Every uploaded image lives here with a title, description, and tags. Mark an image <strong>Public</strong> to feature it in the consumer design gallery and its SEO page.</p>
+          </div>
+          <button class="btn btn--primary" id="add-gallery-btn">+ Upload image</button>
+        </div>
+        <div class="gallery-toolbar-admin">
+          <input type="search" id="gallery-admin-search" class="gallery-admin-search" placeholder="Search the library — title or tag…" aria-label="Search the media library">
+        </div>
+        <div class="grid grid--3" id="gallery-grid"></div>
+      </section>
+
       <!-- ============== DISCOUNTS ============== -->
       <section class="panel" data-panel="discounts" hidden>
         <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Store-wide sale</h2>
+            <p class="panel__subtitle">One site-wide percentage off every product, applied automatically (no code). When live, a banner shows across the site and prices are struck through. If a customer also has a coupon, the bigger discount wins.</p>
+          </div>
+          <span id="sale-status" class="sale-status" aria-live="polite">Off</span>
+        </div>
+
+        <form id="sale-form" class="form sale-form" autocomplete="off">
+          <label class="sale-toggle">
+            <input type="checkbox" name="active" id="sale-active">
+            <span>Sale is live</span>
+          </label>
+
+          <div class="field-row">
+            <label class="field">
+              <span class="field__label">Percent off (%)</span>
+              <input type="number" name="percent" id="sale-percent" min="1" max="100" step="1" placeholder="e.g. 20">
+            </label>
+            <label class="field">
+              <span class="field__label">Max discount per order (₹) — optional cap</span>
+              <input type="number" name="maxDiscount" id="sale-max" min="1" step="1" placeholder="e.g. 2000">
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field__label">Sale name — shown on the checkout discount line</span>
+            <input type="text" name="label" id="sale-label" maxlength="80" placeholder="e.g. Mid-Season Sale">
+          </label>
+
+          <label class="field">
+            <span class="field__label">Banner text — shown in the top strip (leave blank to auto-generate)</span>
+            <input type="text" name="bannerText" id="sale-banner-text" maxlength="200" placeholder="e.g. Mid-Season Sale — 20% off everything. No code needed.">
+          </label>
+
+          <div class="field-row">
+            <label class="field">
+              <span class="field__label">Starts at — optional</span>
+              <input type="datetime-local" name="startsAt" id="sale-starts">
+            </label>
+            <label class="field">
+              <span class="field__label">Ends at — optional</span>
+              <input type="datetime-local" name="endsAt" id="sale-ends">
+            </label>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn--primary">Save sale</button>
+          </div>
+        </form>
+
+        <div class="panel__head" style="margin-top:48px;">
           <div>
             <h2 class="panel__title">Discount codes</h2>
             <p class="panel__subtitle">Create coupon codes — percentage off (with an optional cap) or a flat amount off. Customers enter them in the cart.</p>
@@ -145,6 +233,20 @@
         <button class="modal__close" id="modal-close" aria-label="Close">×</button>
       </div>
       <div class="modal__body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Gallery picker (stacks above the edit modal) -->
+  <div id="picker-backdrop" class="modal-backdrop picker-backdrop" hidden>
+    <div class="modal modal--wide" role="dialog" aria-modal="true" aria-label="Choose from gallery">
+      <div class="modal__head">
+        <h3 class="modal__title">Choose from gallery</h3>
+        <button class="modal__close" id="picker-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal__body">
+        <input type="search" id="picker-search" class="picker-search" placeholder="Search the media library…" aria-label="Search the media library">
+        <div id="picker-grid" class="picker-grid"></div>
+      </div>
     </div>
   </div>
 
