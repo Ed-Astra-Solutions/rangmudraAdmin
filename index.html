@@ -68,6 +68,21 @@
           </div>
           <button class="btn btn--primary" id="add-product-btn">+ New product</button>
         </div>
+        <div class="product-toolbar">
+          <input type="search" id="products-search" class="gallery-admin-search" placeholder="Search products — name, category, or print type…" aria-label="Search products">
+          <div class="filter-row" id="product-category-filter">
+            <button class="chip active" data-cat="all">All</button>
+            <button class="chip" data-cat="Women's Wear">Women's Wear</button>
+            <button class="chip" data-cat="Men's Wear">Men's Wear</button>
+            <button class="chip" data-cat="Home Decor">Home Decor</button>
+            <button class="chip" data-cat="Accessories">Accessories</button>
+          </div>
+          <div class="filter-row" id="product-print-filter">
+            <button class="chip active" data-print="all">All prints</button>
+            <button class="chip" data-print="Block Printed">Block Printed</button>
+            <button class="chip" data-print="Eco Printed">Eco Printed</button>
+          </div>
+        </div>
         <div class="grid grid--3" id="products-grid"></div>
       </section>
 

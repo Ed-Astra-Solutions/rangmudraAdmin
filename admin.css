@@ -238,6 +238,18 @@ body {
   position: relative;
 }
 .card__img--placeholder { display: grid; place-items: center; color: var(--sc-l4x); font-size: 12px; letter-spacing: 0.15em; }
+.card__video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.card__badge {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(44, 26, 16, 0.72);
+  color: var(--pr-l5);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
 .card__tag {
   position: absolute;
   top: 12px;
@@ -250,6 +262,8 @@ body {
   letter-spacing: 0.15em;
   text-transform: uppercase;
 }
+.card__tag--sale { left: auto; right: 12px; background: var(--pr-b2); }
+.card__price-was { color: var(--sc-l4x); text-decoration: line-through; font-weight: 400; margin-right: 6px; }
 .card__body { padding: 20px; display: flex; flex-direction: column; gap: 8px; flex-grow: 1; }
 .card__title { font-family: var(--font-italiana); font-size: 20px; color: var(--sc-100); }
 .card__meta { font-size: 12px; color: var(--sc-l3); letter-spacing: 0.05em; }
@@ -259,6 +273,11 @@ body {
 
 /* -------- Filter chips -------- */
 .filter-row { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+
+.product-toolbar { margin-bottom: 24px; }
+.product-toolbar .gallery-admin-search { margin-bottom: 16px; }
+.product-toolbar .filter-row { margin-bottom: 12px; }
+.product-toolbar .filter-row:last-child { margin-bottom: 0; }
 .chip {
   border: 1px solid rgba(44, 26, 16, 0.2);
   background: transparent;
@@ -350,6 +369,8 @@ body {
   position: relative;
   display: grid;
   place-items: center;
+  object-fit: cover;
+  width: 100%;
   color: var(--sc-l4x);
   font-size: 11px;
   letter-spacing: 0.15em;

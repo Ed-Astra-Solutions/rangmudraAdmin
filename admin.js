@@ -22,6 +22,9 @@ const state = {
   gallery: [],
   gallerySearch: '',
   workshopCategoryFilter: 'all',
+  productSearch: '',
+  productCategoryFilter: 'all',
+  productPrintFilter: 'all',
 };
 
 // ---------- HTTP ----------
@@ -144,18 +147,42 @@ function renderProducts() {
     grid.innerHTML = emptyState('No products yet. Click <strong>+ New product</strong> to add one.');
     return;
   }
-  state.products.forEach((p) => {
+  const q = state.productSearch.trim().toLowerCase();
+  const filtered = state.products.filter((p) => {
+    if (state.productCategoryFilter !== 'all' && p.category !== state.productCategoryFilter) return false;
+    if (state.productPrintFilter !== 'all' && p.printType !== state.productPrintFilter) return false;
+    if (q) {
+      const hay = `${p.name || ''} ${p.category || ''} ${p.printType || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  if (!filtered.length) {
+    grid.innerHTML = emptyState('No products match your search or filters.');
+    return;
+  }
+  filtered.forEach((p) => {
     const card = document.createElement('div');
     card.className = 'card';
     const img = p.images && p.images[0];
+    const disc = (p.discount && Number(p.discount.value) > 0) ? p.discount : null;
+    const price = Number(p.price) || 0;
+    const now = disc
+      ? Math.max(0, disc.type === 'flat' ? price - disc.value : Math.round(price * (1 - disc.value / 100)))
+      : price;
+    const discLabel = disc ? (disc.type === 'flat' ? `₹${disc.value} off` : `${disc.value}% off`) : '';
+    const priceHtml = disc
+      ? `<span class="card__price-was">₹${price.toLocaleString('en-IN')}</span> ₹${now.toLocaleString('en-IN')}`
+      : `₹${price.toLocaleString('en-IN')}`;
     card.innerHTML = `
       <div class="card__img" ${img ? `style="background-image:url('${img}')"` : ''}>
         ${p.featured ? '<span class="card__tag">Featured</span>' : ''}
+        ${disc ? `<span class="card__tag card__tag--sale">${discLabel}</span>` : ''}
       </div>
       <div class="card__body">
         <h3 class="card__title">${escapeHtml(p.name)}</h3>
         <p class="card__meta">${escapeHtml(p.category)} · ${escapeHtml(p.printType || '')}</p>
-        <p class="card__price">₹${(p.price || 0).toLocaleString('en-IN')}</p>
+        <p class="card__price">${priceHtml}</p>
       </div>
       <div class="card__actions">
         <button class="btn btn--ghost btn--sm" data-action="edit-product" data-id="${p.id}">Edit</button>
@@ -176,6 +203,27 @@ $('#products-grid').addEventListener('click', (e) => {
 
 $('#add-product-btn').addEventListener('click', () => openProductModal(null));
 
+$('#products-search').addEventListener('input', (e) => {
+  state.productSearch = e.target.value;
+  renderProducts();
+});
+
+$('#product-category-filter').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  state.productCategoryFilter = chip.dataset.cat;
+  $$('#product-category-filter .chip').forEach((c) => c.classList.toggle('active', c === chip));
+  renderProducts();
+});
+
+$('#product-print-filter').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  state.productPrintFilter = chip.dataset.print;
+  $$('#product-print-filter .chip').forEach((c) => c.classList.toggle('active', c === chip));
+  renderProducts();
+});
+
 function openProductModal(product) {
   const isEdit = !!product;
   const p = product || {
@@ -184,6 +232,9 @@ function openProductModal(product) {
     available: true, images: [], description: '', features: [],
     measurements: '', care: '',
   };
+  const disc = (p.discount && Number(p.discount.value) > 0) ? p.discount : null;
+  const discType = disc ? (disc.type === 'flat' ? 'flat' : 'percent') : 'none';
+  const discValue = disc ? disc.value : '';
   openModal(isEdit ? `Edit ${p.name}` : 'New product', `
     <form id="product-form" class="form-grid" autocomplete="off">
       <div class="upload" data-upload="product-image">
@@ -232,6 +283,20 @@ function openProductModal(product) {
           <input name="sizes" value="${escapeAttr((p.sizes || []).join(', '))}">
         </label>
       </div>
+      <div class="field-row">
+        <label class="field">
+          <span class="field__label">Discount</span>
+          <select name="discountType">
+            ${[['none', 'No discount'], ['percent', 'Percentage (% off)'], ['flat', 'Flat (₹ off)']].map(([v, l]) =>
+              `<option value="${v}" ${v === discType ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">Discount amount</span>
+          <input name="discountValue" type="number" min="0" value="${discValue}" placeholder="e.g. 20% or 500 flat">
+        </label>
+      </div>
+      <p class="field__hint">A product's own discount takes priority over any store-wide sale — the sale won't apply on top of it.</p>
       <label class="field">
         <span class="field__label">Tags (comma-separated, e.g. INDIGO, TOPWEAR)</span>
         <input name="tags" value="${escapeAttr((p.tags || []).join(', '))}">
@@ -289,6 +354,13 @@ function openProductModal(product) {
       care: fd.get('care'),
       featured: fd.get('featured') === 'on',
       available: fd.get('available') === 'on',
+      // Per-product discount: null clears it (percent OR flat ₹ off). The server
+      // re-validates and clamps this; sending null on edit removes any discount.
+      discount: (() => {
+        const t = fd.get('discountType');
+        const v = Number(fd.get('discountValue'));
+        return (t === 'percent' || t === 'flat') && v > 0 ? { type: t, value: v } : null;
+      })(),
       // The form only edits the primary (first) image. Preserve any additional
       // gallery images on the existing product so editing doesn't collapse a
       // multi-image product down to one.
@@ -992,7 +1064,8 @@ function renderGallery() {
   }
   grid.innerHTML = items.map((g) => `
     <div class="card">
-      <div class="card__img" style="${g.url ? `background-image:url('${escapeAttr(g.url)}')` : ''}">
+      <div class="card__img" style="${!isVideoItem(g) && g.url ? `background-image:url('${escapeAttr(g.url)}')` : ''}">
+        ${isVideoItem(g) ? `<video class="card__video" src="${escapeAttr(g.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="card__badge">▶ Video</span>` : ''}
         <span class="card__tag ${g.public ? 'card__tag--public' : 'card__tag--private'}">${g.public ? 'Public' : 'Private'}</span>
       </div>
       <div class="card__body">
@@ -1030,12 +1103,15 @@ function openGalleryForm(item) {
     <form id="gallery-form" class="form-grid" autocomplete="off">
       ${isEdit ? `
         <div class="upload">
-          <div class="upload__preview" style="background-image:url('${escapeAttr(g.url)}')"></div>
+          ${isVideoItem(g)
+            ? `<video class="upload__preview" src="${escapeAttr(g.url)}" controls muted playsinline preload="metadata"></video>`
+            : `<div class="upload__preview" style="background-image:url('${escapeAttr(g.url)}')"></div>`}
         </div>
       ` : `
         <label class="field">
-          <span class="field__label">Image file</span>
-          <input type="file" accept="image/*" name="file" id="gallery-file" required>
+          <span class="field__label">Image or video file</span>
+          <input type="file" accept="image/*,video/*,.heic,.heif" name="file" id="gallery-file" required>
+          <span class="field__hint">Images, HEIC (auto-converted to JPEG), and video up to 100 MB.</span>
         </label>
       `}
       <label class="field">
@@ -1820,6 +1896,11 @@ function escapeHtml(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function escapeAttr(s) { return escapeHtml(s); }
+// A gallery record is a video when flagged `type:'video'` or (for older records
+// predating that field) when its url has a known video extension.
+function isVideoItem(g) {
+  return (g && g.type === 'video') || /\.(mp4|webm|mov|ogg|ogv|mkv)$/i.test((g && g.url) || '');
+}
 function splitCSV(s) {
   return (s || '').toString().split(',').map((x) => x.trim()).filter(Boolean);
 }
