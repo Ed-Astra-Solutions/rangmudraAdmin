@@ -1172,8 +1172,10 @@ function closeFrameLayer() {
 }
 
 $('#frame-close')?.addEventListener('click', closeFrameLayer);
+// Same rule as the edit modal: an in-progress crop is unsaved work, so only the
+// X button and Cancel dismiss it.
 $('#frame-backdrop')?.addEventListener('click', (e) => {
-  if (e.target === $('#frame-backdrop') || e.target.matches('[data-frame-close]')) closeFrameLayer();
+  if (e.target.closest('[data-frame-close]')) closeFrameLayer();
 });
 
 function openFrameModal(media, onSave, { aspect = '0.8' } = {}) {
@@ -1529,8 +1531,8 @@ function renderGallery() {
   const items = state.gallery.filter((g) => galleryMatches(g, q));
   if (!items.length) {
     grid.innerHTML = emptyState(state.gallery.length
-      ? 'No images match your search.'
-      : 'No images yet. Click <strong>+ Upload image</strong> to add one to the library.');
+      ? 'Nothing matches your search.'
+      : 'Nothing here yet. Click <strong>+ Upload media</strong> to add a photo or video to the library.');
     return;
   }
   // Tiles are a uniform size and the asset is fitted whole inside it (letterboxed
@@ -1540,7 +1542,10 @@ function renderGallery() {
     <div class="card">
       <div class="card__img card__img--fit">
         ${isVideoItem(g)
-          ? `<video class="card__media" src="${escapeAttr(g.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="card__badge">▶ Video</span>`
+          // Playable in place: the library is where you check a clip is the right
+          // one, and that needs the video itself, not a first-frame poster.
+          // Muted + loop so a grid of them stays quiet.
+          ? `<video class="card__media" src="${escapeAttr(g.url)}" controls loop muted playsinline preload="metadata"></video><span class="card__badge card__badge--corner">Video</span>`
           : `<img class="card__media" src="${escapeAttr(g.url)}" alt="">`}
         <span class="card__tag ${g.public ? 'card__tag--public' : 'card__tag--private'}">${g.public ? 'Public' : 'Private'}</span>
       </div>
@@ -1575,7 +1580,7 @@ $('#add-gallery-btn')?.addEventListener('click', () => openGalleryForm(null));
 function openGalleryForm(item) {
   const isEdit = !!item;
   const g = item || { title: '', description: '', alt: '', tags: [], public: false };
-  openModal(isEdit ? `Edit — ${g.title}` : 'Upload image', `
+  openModal(isEdit ? `Edit — ${g.title}` : 'Upload media', `
     <form id="gallery-form" class="form-grid" autocomplete="off">
       ${isEdit ? `
         <div class="upload">
@@ -1638,7 +1643,7 @@ function openGalleryForm(item) {
         if (!file) { toast('Choose an image file', true); submitBtn.disabled = false; return; }
         const dims = await readImageDims(file);
         await uploadImage(file, { ...meta, width: dims.width || '', height: dims.height || '' });
-        toast('Image uploaded to library');
+        toast('Uploaded to the library');
       }
       closeModal();
       loadGallery();
@@ -2348,16 +2353,21 @@ function closeModal() {
   document.body.style.overflow = '';
 }
 $('#modal-close').addEventListener('click', closeModal);
+// Deliberately NO click-outside-to-close here. The edit modal holds a
+// half-filled form, and dismissing it on a stray backdrop click loses the work
+// silently. It closes only via the X button or an explicit Cancel
+// ([data-modal-close]) — the latter is delegated through the backdrop, which is
+// why this listener still exists.
 $('#modal-backdrop').addEventListener('click', (e) => {
-  if (e.target === $('#modal-backdrop')) closeModal();
-  if (e.target.matches('[data-modal-close]')) closeModal();
+  if (e.target.closest('[data-modal-close]')) closeModal();
 });
-// Escape closes the topmost open layer: frame tool → picker → edit modal.
+
+// Escape closes the gallery picker, which is a transient chooser with nothing
+// to lose. The edit modal and the crop tool hold unsaved work, so they are
+// dismissed only by an explicit button.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  if (!$('#frame-backdrop').hidden) closeFrameLayer();
-  else if (!$('#picker-backdrop').hidden) closePicker();
-  else if (!$('#modal-backdrop').hidden) closeModal();
+  if (!$('#picker-backdrop').hidden) closePicker();
 });
 
 // ---------- Toast ----------

@@ -364,12 +364,15 @@ body {
 }
 .upload__preview {
   aspect-ratio: 4 / 3;
-  background: var(--pr-l3) center/cover no-repeat;
+  /* Fit the whole asset, never crop it: this preview exists to show what was
+     uploaded, and a cover-crop hides exactly the framing problem the editor is
+     there to fix. Empty space around it is intentional. */
+  background: var(--pr-l3) center/contain no-repeat;
   border-radius: 8px;
   position: relative;
   display: grid;
   place-items: center;
-  object-fit: cover;
+  object-fit: contain;
   width: 100%;
   color: var(--sc-l4x);
   font-size: 11px;
@@ -745,3 +748,13 @@ body {
   cursor: not-allowed;
   pointer-events: none;
 }
+
+/* Video badge sits top-right: the bottom edge belongs to the player controls. */
+.card__badge--corner {
+  top: 12px;
+  right: 12px;
+  bottom: auto;
+  left: auto;
+}
+/* A playable tile shouldn't look like a clickable card surface. */
+.card__img--fit video.card__media { background: #000; }
