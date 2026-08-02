@@ -237,6 +237,23 @@
         <div id="admins-list"></div>
       </section>
 
+      <!-- ============== EDITOR (full-page takeover) ============== -->
+      <!-- Replaces the list panels while editing. The action bar is sticky so
+           Save is reachable without scrolling a long form to the bottom. -->
+      <section class="editor" id="editor-view" hidden>
+        <div class="editor__bar">
+          <button type="button" class="editor__back" id="editor-back">
+            <span aria-hidden="true">←</span> <span id="editor-back-label">Back</span>
+          </button>
+          <h2 class="editor__title" id="editor-title"></h2>
+          <div class="editor__actions">
+            <button type="button" class="btn btn--ghost" id="editor-cancel">Cancel</button>
+            <button type="button" class="btn btn--primary" id="editor-save">Save</button>
+          </div>
+        </div>
+        <div class="editor__body" id="editor-body"></div>
+      </section>
+
     </main>
   </div>
 

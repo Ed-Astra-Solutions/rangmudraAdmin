@@ -847,3 +847,67 @@ body {
 }
 .slot__actions-row { display: flex; gap: 8px; }
 .slot__actions-row .btn { flex: 1; }
+
+/* ---------- Full-page editor ---------- */
+/* Editing takes over the content area instead of opening a dialog: long forms
+   (a product carries a media list, a crop tool and ~15 fields) never fit a modal
+   comfortably. The left nav stays put so you can see where you are. */
+.editor { display: flex; flex-direction: column; min-height: 100%; }
+.editor[hidden] { display: none; }
+
+.editor__bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  /* Bleed over .admin-main's 48px gutters so scrolled content passes behind the
+     bar rather than through the gaps beside it. */
+  margin: -40px -48px 8px;
+  padding: 20px 48px;
+  background: var(--pr-l5);
+  border-bottom: 1px solid rgba(44, 26, 16, 0.1);
+}
+.editor__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 8px 0;
+  border: none;
+  background: transparent;
+  color: var(--sc-l3);
+  font-family: var(--font-archivo);
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.editor__back:hover { color: var(--sc-100); }
+.editor__title {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-italiana);
+  font-size: 28px;
+  color: var(--sc-100);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.editor__actions { display: flex; gap: 12px; flex-shrink: 0; }
+.editor__body { padding: 24px 0 80px; max-width: 860px; }
+
+/* The sticky bar already carries Cancel + Save, so the form's own row would be a
+   duplicate pair of buttons. */
+.editor__body .form-actions { display: none; }
+
+/* Matches .admin-main's own breakpoint and padding (32px 20px). */
+@media (max-width: 800px) {
+  .editor__bar { margin: -32px -20px 8px; padding: 16px 20px; }
+}
+@media (max-width: 720px) {
+  .editor__bar { flex-wrap: wrap; gap: 12px; }
+  .editor__title { order: 3; flex-basis: 100%; font-size: 22px; white-space: normal; }
+  .editor__actions { margin-left: auto; }
+}

@@ -107,9 +107,15 @@ $('#logout-btn').addEventListener('click', async () => {
 
 $$('.admin-tab').forEach((btn) => {
   btn.addEventListener('click', () => {
-    state.tab = btn.dataset.tab;
-    $$('.admin-tab').forEach((b) => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
-    $$('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== state.tab; });
+    const go = () => {
+      state.tab = btn.dataset.tab;
+      $$('.admin-tab').forEach((b) => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
+      $$('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== state.tab; });
+    };
+    // Leaving an open editor runs the unsaved-changes guard first; the switch
+    // only happens once it actually closes.
+    if (editorIsOpen()) closeEditor({ then: go });
+    else go();
   });
 });
 
@@ -239,7 +245,7 @@ function openProductModal(product) {
   const disc = (p.discount && Number(p.discount.value) > 0) ? p.discount : null;
   const discType = disc ? (disc.type === 'flat' ? 'flat' : 'percent') : 'none';
   const discValue = disc ? disc.value : '';
-  openModal(isEdit ? `Edit ${p.name}` : 'New product', `
+  openEditor(isEdit ? `Edit — ${p.name}` : 'New product', `
     <form id="product-form" class="form-grid" autocomplete="off">
       <div id="product-media"></div>
       <div class="field-row">
@@ -371,7 +377,7 @@ function openProductModal(product) {
         await api('POST', '/api/admin/products', payload);
         toast('Product created');
       }
-      closeModal();
+      closeEditor({ force: true });
       loadAll();
     } catch (err) {
       toast(err.message, true);
@@ -452,7 +458,7 @@ function openWorkshopModal(workshop) {
     seatsBooked: 0, totalSeats: 0, image: '', includes: [], idealFor: [],
   };
   const hasPrice = w.price != null && w.price !== '';
-  openModal(isEdit ? `Edit ${w.title}` : 'New workshop', `
+  openEditor(isEdit ? `Edit — ${w.title}` : 'New workshop', `
     <form id="workshop-form" class="form-grid" autocomplete="off">
       <div id="workshop-media"></div>
       <div class="field-row">
@@ -591,7 +597,7 @@ function openWorkshopModal(workshop) {
         await api('POST', '/api/admin/workshops', payload);
         toast('Workshop created');
       }
-      closeModal();
+      closeEditor({ force: true });
       loadAll();
     } catch (err) {
       toast(err.message, true);
@@ -709,7 +715,7 @@ function openBlogModal(blog) {
     readTime: '', date: new Date().toISOString().slice(0, 10),
     category: '', image: '', featured: false, content: [],
   };
-  openModal(isEdit ? `Edit ${b.title}` : 'New blog', `
+  openEditor(isEdit ? `Edit — ${b.title}` : 'New blog', `
     <form id="blog-form" class="form-grid" autocomplete="off">
       <div class="upload" data-upload="blog-image">
         <div class="upload__preview" style="${b.image ? `background-image:url('${b.image}')` : ''}">${b.image ? '' : 'No image'}</div>
@@ -817,7 +823,7 @@ function openBlogModal(blog) {
         await api('POST', '/api/admin/blogs', payload);
         toast('Blog created');
       }
-      closeModal();
+      closeEditor({ force: true });
       loadAll();
     } catch (err) {
       toast(err.message, true);
@@ -1144,7 +1150,10 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
     `).join('');
   };
 
-  const add = (added) => { items = items.concat(added.filter(Boolean)); render(); };
+  // Reordering, removing and cropping never fire an input event, so the media
+  // list tells the editor it is dirty itself.
+  const touched = () => { markEditorDirty(); render(); };
+  const add = (added) => { items = items.concat(added.filter(Boolean)); touched(); };
 
   $('[data-media-add]', container).addEventListener('click', () => fileInput.click());
   $('[data-media-pick]', container).addEventListener('click', () => {
@@ -1168,15 +1177,15 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
     const i = Number(row.dataset.index);
     if (e.target.closest('[data-media-up]')) {
       [items[i - 1], items[i]] = [items[i], items[i - 1]];
-      render();
+      touched();
     } else if (e.target.closest('[data-media-down]')) {
       [items[i + 1], items[i]] = [items[i], items[i + 1]];
-      render();
+      touched();
     } else if (e.target.closest('[data-media-remove]')) {
       items.splice(i, 1);
-      render();
+      touched();
     } else if (e.target.closest('[data-media-frame]')) {
-      openFrameModal(items[i], (updated) => { items[i] = updated; render(); });
+      openFrameModal(items[i], (updated) => { items[i] = updated; touched(); });
     }
   });
 
@@ -1693,7 +1702,7 @@ $('#add-gallery-btn')?.addEventListener('click', () => openGalleryForm(null));
 function openGalleryForm(item) {
   const isEdit = !!item;
   const g = item || { title: '', description: '', alt: '', tags: [], public: false };
-  openModal(isEdit ? `Edit — ${g.title}` : 'Upload media', `
+  openEditor(isEdit ? `Edit — ${g.title}` : 'Upload media', `
     <form id="gallery-form" class="form-grid" autocomplete="off">
       ${isEdit ? `
         <div class="upload">
@@ -1758,7 +1767,7 @@ function openGalleryForm(item) {
         await uploadImage(file, { ...meta, width: dims.width || '', height: dims.height || '' });
         toast('Uploaded to the library');
       }
-      closeModal();
+      closeEditor({ force: true });
       loadGallery();
     } catch (err) {
       toast(err.message, true);
@@ -1972,7 +1981,7 @@ function openDiscountModal(d) {
   const isEdit = !!d;
   const v = d || {};
   const dateVal = (iso) => (iso ? new Date(iso).toISOString().slice(0, 10) : '');
-  openModal(isEdit ? `Edit ${v.code}` : 'New discount code', `
+  openEditor(isEdit ? `Edit — ${v.code}` : 'New discount code', `
     <form id="discount-form" class="form" autocomplete="off">
       <label class="field">
         <span class="field__label">Code</span>
@@ -2058,7 +2067,7 @@ function openDiscountModal(d) {
         await api('POST', '/api/admin/discounts', payload);
         toast('Discount created');
       }
-      closeModal();
+      closeEditor({ force: true });
       loadDiscounts();
     } catch (err) {
       toast(err.message, true);
@@ -2187,7 +2196,7 @@ function openOrderModal(o) {
   const taxPct = v.taxRate != null ? +(v.taxRate * 100).toFixed(2) : 8;
   const catalogueOpts = (state.products || [])
     .map((p) => `<option value="${escapeAttr(p.id)}">${escapeAttr(p.name)} — ₹${p.price}</option>`).join('');
-  openModal(isEdit ? `Order ${v.id}` : 'New order', `
+  openEditor(isEdit ? `Order ${v.id}` : 'New order', `
     <form id="order-form" class="form" autocomplete="off">
       ${isEdit ? `<p class="order-modal__meta">${statusBadge(v.status)} · Created ${escapeHtml(orderDate(v.createdAt))}${v.source === 'manual' ? ' · Manual order' : ' · Store order'}</p>` : ''}
       <div class="form-grid-2">
@@ -2321,7 +2330,7 @@ function openOrderModal(o) {
     try {
       if (isEdit) { await api('PUT', `/api/admin/orders/${encodeURIComponent(v.id)}`, payload); toast('Order updated'); }
       else { await api('POST', '/api/admin/orders', payload); toast('Order created'); }
-      closeModal();
+      closeEditor({ force: true });
       loadOrders();
     } catch (err) { toast(err.message, true); }
   });
@@ -2406,7 +2415,7 @@ $('#admins-list').addEventListener('click', (e) => {
 });
 
 $('#add-admin-btn').addEventListener('click', () => {
-  openModal('New admin', `
+  openEditor('New admin', `
     <form id="admin-form" class="form" autocomplete="off">
       <label class="field">
         <span class="field__label">Email</span>
@@ -2432,7 +2441,7 @@ $('#add-admin-btn').addEventListener('click', () => {
     };
     try {
       await api('POST', '/api/admin/admins', payload);
-      closeModal();
+      closeEditor({ force: true });
       toast('Admin added');
       loadAdmins();
     } catch (err) {
@@ -2453,6 +2462,109 @@ async function confirmDeleteAdmin(email) {
 }
 
 // ---------- Modal ----------
+
+// ---------- Full-page editor ----------
+//
+// Editors take over the content area rather than opening a dialog. The sticky
+// bar drives the form underneath it, so `Save` is always reachable on a long
+// form. Small confirmations (delete, discard) still use the centred modal.
+
+let editor = null;   // { dirty, backLabel } while an editor is open
+
+const editorIsOpen = () => !$('#editor-view').hidden;
+
+// Any edit anywhere in the body marks the editor dirty. Form fields report
+// themselves; the media list calls markEditorDirty() directly, since reordering
+// or cropping never fires an input event.
+function markEditorDirty() {
+  if (editor) editor.dirty = true;
+}
+
+// An editor is always opened from the list it belongs to, so the back label is
+// derived rather than repeated at every call site.
+const TAB_LABELS = {
+  products: 'Products', orders: 'Orders', workshops: 'Workshops', blogs: 'Blogs',
+  sections: 'Section images', gallery: 'Gallery', discounts: 'Discounts', admins: 'Admins',
+};
+
+function openEditor(title, bodyHtml) {
+  $('#editor-title').textContent = title;
+  $('#editor-back-label').textContent = TAB_LABELS[state.tab] || 'Back';
+  $('#editor-body').innerHTML = bodyHtml;
+  $$('[data-panel]').forEach((p) => { p.hidden = true; });
+  $('#editor-view').hidden = false;
+
+  // Mirror the form's own submit label into the sticky bar, so "Create product"
+  // vs "Save changes" still reads correctly.
+  const submit = $('#editor-body form button[type="submit"]');
+  $('#editor-save').textContent = submit ? submit.textContent.trim() : 'Save';
+  $('#editor-save').disabled = false;
+
+  editor = { dirty: false };
+  $('.admin-main')?.scrollTo?.({ top: 0 });
+  window.scrollTo({ top: 0 });
+}
+
+// `force` skips the unsaved-changes guard — used after a successful save.
+function closeEditor({ force = false, then = null } = {}) {
+  if (!force && editor && editor.dirty) {
+    confirmDiscard(() => closeEditor({ force: true, then }));
+    return;
+  }
+  $('#editor-view').hidden = true;
+  $('#editor-body').innerHTML = '';
+  editor = null;
+  if (then) { then(); return; }
+  // Restore whichever list the editor was opened from.
+  $$('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== state.tab; });
+}
+
+function confirmDiscard(onDiscard) {
+  openModal('Discard changes?', `
+    <p style="color:var(--sc-l3);margin-bottom:24px;">Your edits haven't been saved. Leaving now loses them.</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn--ghost" data-modal-close>Keep editing</button>
+      <button type="button" class="btn btn--danger" id="confirm-discard">Discard</button>
+    </div>
+  `);
+  $('#confirm-discard').addEventListener('click', () => {
+    closeModal();
+    onDiscard();
+  });
+}
+
+$('#editor-back')?.addEventListener('click', () => closeEditor());
+$('#editor-cancel')?.addEventListener('click', () => closeEditor());
+$('#editor-save')?.addEventListener('click', () => {
+  // Drive the form rather than duplicating its submit logic — requestSubmit
+  // runs native validation first, exactly as the in-form button did.
+  $('#editor-body form')?.requestSubmit();
+});
+
+// While a save is in flight the bar reports it. Every editor form either closes
+// on success or raises an error toast on failure, so those two signals are
+// enough to drive the button without each form having to manage it.
+$('#editor-body')?.addEventListener('submit', () => {
+  const btn = $('#editor-save');
+  editor && (editor.saveLabel = btn.textContent);
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+});
+
+function resetEditorSaveButton() {
+  if (!editor || !editor.saveLabel) return;
+  const btn = $('#editor-save');
+  btn.disabled = false;
+  btn.textContent = editor.saveLabel;
+  editor.saveLabel = null;
+}
+
+// A Cancel inside the form body means the same thing as the bar's Cancel.
+$('#editor-body')?.addEventListener('click', (e) => {
+  if (e.target.closest('[data-modal-close]')) closeEditor();
+});
+['input', 'change'].forEach((ev) =>
+  $('#editor-body')?.addEventListener(ev, markEditorDirty));
 
 function openModal(title, bodyHtml) {
   $('#modal-title').textContent = title;
@@ -2487,6 +2599,8 @@ document.addEventListener('keydown', (e) => {
 
 let toastTimer;
 function toast(msg, isError = false) {
+  // A failed save leaves the editor open — put its button back.
+  if (isError) resetEditorSaveButton();
   const el = $('#toast');
   el.textContent = msg;
   el.classList.toggle('toast--error', !!isError);
