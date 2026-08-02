@@ -911,3 +911,42 @@ body {
   .editor__title { order: 3; flex-basis: 100%; font-size: 22px; white-space: normal; }
   .editor__actions { margin-left: auto; }
 }
+
+/* ---------- File picker with preview ---------- */
+/* The upload form shows the chosen file, not just its name — a filename is no
+   way to tell whether you grabbed the right shot. */
+.file-preview {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--pr-l3);
+}
+.file-preview__media {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;   /* whole asset, same rule as every other preview */
+}
+.file-preview__empty {
+  padding: 0 24px;
+  color: var(--sc-l4x);
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  text-align: center;
+}
+.file-preview__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.file-preview__name {
+  min-width: 0;
+  flex: 1;
+  color: var(--sc-l3);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

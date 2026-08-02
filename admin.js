@@ -1699,6 +1699,71 @@ $('#add-gallery-btn')?.addEventListener('click', () => openGalleryForm(null));
 
 // New = upload form (file required). Edit = metadata only (delete + re-upload to
 // change the image). Both flows keep a single library record per image.
+// HEIC can't be decoded by Chrome or Firefox (Safari can), so a preview is not
+// always possible — say so rather than showing a broken image. The file is
+// transcoded to JPEG server-side on upload either way.
+const HEIC_RE = /\.(heic|heif)$/i;
+
+let filePreviewUrl = null;
+
+function releaseFilePreview() {
+  if (filePreviewUrl) {
+    URL.revokeObjectURL(filePreviewUrl);
+    filePreviewUrl = null;
+  }
+}
+
+function wireGalleryFilePreview() {
+  const input = $('#gallery-file');
+  const box = $('#gallery-preview');
+  const nameEl = $('#gallery-file-name');
+  const errEl = $('#gallery-file-error');
+
+  $('#gallery-file-btn').addEventListener('click', () => input.click());
+
+  input.addEventListener('change', () => {
+    releaseFilePreview();
+    errEl.hidden = true;
+    const file = input.files[0];
+    if (!file) {
+      box.innerHTML = '<span class="file-preview__empty">Nothing chosen yet</span>';
+      nameEl.textContent = 'No file chosen';
+      return;
+    }
+
+    const mb = file.size / 1024 / 1024;
+    nameEl.textContent = `${file.name} · ${mb < 1 ? `${Math.round(file.size / 1024)} KB` : `${mb.toFixed(1)} MB`}`;
+
+    // Flag an oversized file now instead of after a long failed upload.
+    if (mb > state.maxUploadMB) {
+      errEl.textContent = `This file is ${mb.toFixed(1)} MB — the limit is ${state.maxUploadMB} MB. Compress it and choose again.`;
+      errEl.hidden = false;
+    }
+
+    const isVideo = file.type.startsWith('video/') || VIDEO_URL_RE.test(file.name);
+    const isHeic = HEIC_RE.test(file.name) || /^image\/hei[cf]$/i.test(file.type);
+    filePreviewUrl = URL.createObjectURL(file);
+
+    if (isVideo) {
+      box.innerHTML = `<video class="file-preview__media" src="${filePreviewUrl}" controls muted playsinline preload="metadata"></video>`;
+      return;
+    }
+    if (isHeic) {
+      box.innerHTML = '<span class="file-preview__empty">HEIC selected — this browser can\'t preview it.'
+        + '<br>It will be converted to JPEG when you upload.</span>';
+      releaseFilePreview();
+      return;
+    }
+    const img = document.createElement('img');
+    img.className = 'file-preview__media';
+    img.alt = '';
+    img.onerror = () => { box.innerHTML = '<span class="file-preview__empty">This file can\'t be previewed.</span>'; };
+    img.src = filePreviewUrl;
+    box.innerHTML = '';
+    box.appendChild(img);
+  });
+}
+
 function openGalleryForm(item) {
   const isEdit = !!item;
   const g = item || { title: '', description: '', alt: '', tags: [], public: false };
@@ -1711,11 +1776,19 @@ function openGalleryForm(item) {
             : `<div class="upload__preview" style="background-image:url('${escapeAttr(g.url)}')"></div>`}
         </div>
       ` : `
-        <label class="field">
+        <div class="field">
           <span class="field__label">Image or video file</span>
-          <input type="file" accept="image/*,video/*,.heic,.heif" name="file" id="gallery-file" required>
-          <span class="field__hint">Images, HEIC (auto-converted to JPEG), and video up to 100 MB.</span>
-        </label>
+          <div class="upload__preview file-preview" id="gallery-preview">
+            <span class="file-preview__empty">Nothing chosen yet</span>
+          </div>
+          <div class="file-preview__bar">
+            <button type="button" class="btn btn--ghost btn--sm" id="gallery-file-btn">Choose file</button>
+            <span class="file-preview__name" id="gallery-file-name">No file chosen</span>
+          </div>
+          <input type="file" accept="image/*,video/*,.heic,.heif" name="file" id="gallery-file" required hidden>
+          <span class="field__hint">Images, HEIC (auto-converted to JPEG), and video up to ${state.maxUploadMB} MB.</span>
+          <p class="field__error" id="gallery-file-error" hidden></p>
+        </div>
       `}
       <label class="field">
         <span class="field__label">Title</span>
@@ -1743,6 +1816,11 @@ function openGalleryForm(item) {
       </div>
     </form>
   `);
+
+  // Live preview of the chosen file, so you can see what you're about to add
+  // rather than trusting a filename. The bytes never leave the browser here —
+  // it's a blob URL over the local File.
+  if (!isEdit) wireGalleryFilePreview();
 
   $('#gallery-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -2513,6 +2591,7 @@ function closeEditor({ force = false, then = null } = {}) {
   }
   $('#editor-view').hidden = true;
   $('#editor-body').innerHTML = '';
+  releaseFilePreview();
   editor = null;
   if (then) { then(); return; }
   // Restore whichever list the editor was opened from.
