@@ -178,7 +178,8 @@ function renderProducts() {
       ? `<span class="card__price-was">₹${price.toLocaleString('en-IN')}</span> ₹${now.toLocaleString('en-IN')}`
       : `₹${price.toLocaleString('en-IN')}`;
     card.innerHTML = `
-      <div class="card__img" ${img ? `style="background-image:url('${img}')"` : ''}>
+      <div class="card__img card__img--fit card__img--product">
+        ${img ? `<img class="card__media" src="${escapeAttr(img)}" alt="">` : '<span class="card__img-empty">No photo</span>'}
         ${p.featured ? '<span class="card__tag">Featured</span>' : ''}
         ${disc ? `<span class="card__tag card__tag--sale">${discLabel}</span>` : ''}
       </div>
@@ -406,7 +407,8 @@ function renderWorkshops() {
       ? `₹${w.price.toLocaleString('en-IN')} ${w.priceUnit || ''}`
       : (w.priceLabel || '');
     card.innerHTML = `
-      <div class="card__img" ${w.image ? `style="background-image:url('${w.image}')"` : ''}>
+      <div class="card__img card__img--fit card__img--workshop">
+        ${w.image ? `<img class="card__media" src="${escapeAttr(w.image)}" alt="">` : '<span class="card__img-empty">No photo</span>'}
         <span class="card__tag">${escapeHtml(w.categoryLabel || w.category)}</span>
       </div>
       <div class="card__body">
@@ -672,7 +674,8 @@ function renderBlogs() {
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
-      <div class="card__img" ${b.image ? `style="background-image:url('${b.image}')"` : ''}>
+      <div class="card__img card__img--fit card__img--blog">
+        ${b.image ? `<img class="card__media" src="${escapeAttr(b.image)}" alt="">` : '<span class="card__img-empty">No photo</span>'}
         ${b.featured ? '<span class="card__tag">Featured</span>' : ''}
       </div>
       <div class="card__body">
@@ -891,6 +894,40 @@ const SECTION_LABELS = {
   },
 };
 
+// The real shape of each slot on the public site, as width ÷ height. The slot
+// preview is drawn at this ratio and the crop tool opens locked to it, so the
+// admin frames against the actual box the photo will land in instead of
+// guessing from a dropdown.
+const SECTION_SHAPES = {
+  'homepage.hero': [1.7778, 'Full-bleed hero (16:9)'],
+  'homepage.introduction': [0.87, 'Still-life column (~7:8)'],
+  'homepage.workshops-promo': [1.7778, 'Promo banner (16:9)'],
+  'homepage.shop-promo': [1.7778, 'Promo banner (16:9)'],
+  'homepage.testimonials': [0.75, 'Portrait panel (3:4)'],
+  'homepage.gallery': [2.4, 'Full-bleed strip (12:5)'],
+  'homepage.quick-reads-large': [1.3333, 'Large blog card (4:3)'],
+  'homepage.quick-reads-1': [1, 'Blog thumb (1:1)'],
+  'homepage.quick-reads-2': [1, 'Blog thumb (1:1)'],
+  'about.hero': [3.2, 'Hero band (16:5)'],
+  'about.story': [0.8, 'Story image (4:5)'],
+  'about.sustainability': [1.3333, 'Sustainability image (4:3)'],
+  'about.team-hero': [1.7778, 'Team primary (16:9)'],
+  'about.team-secondary': [1.3333, 'Team secondary (4:3)'],
+  'about.faq-decor': [0.75, 'FAQ decoration (3:4)'],
+  'workshops.hero': [1.7778, 'Hero band (16:9)'],
+  'workshops.category-experience': [0.8, 'Category card (4:5)'],
+  'workshops.category-corporate': [0.8, 'Category card (4:5)'],
+  'workshops.category-curated': [0.8, 'Category card (4:5)'],
+  'shop.hero': [2.4, 'Shop hero (12:5)'],
+  'enquire.hero': [2.4, 'Enquire hero (12:5)'],
+  'enquire.carousel-1': [1.7778, 'Carousel slide (16:9)'],
+  'enquire.carousel-2': [1.7778, 'Carousel slide (16:9)'],
+  'enquire.carousel-3': [1.7778, 'Carousel slide (16:9)'],
+};
+
+const DEFAULT_SHAPE = [1.6, 'Section band (16:10)'];
+const sectionShape = (page, slot) => SECTION_SHAPES[`${page}.${slot}`] || DEFAULT_SHAPE;
+
 function renderSections() {
   const container = $('#sections-list');
   container.innerHTML = '';
@@ -904,22 +941,29 @@ function renderSections() {
         // A slot value is a media entry; records saved before the media model
         // are bare URL strings, which normalizeMedia() upgrades on read.
         const m = normalizeMedia(state.sections[pageKey][slotKey]);
+        const [ratio, shapeLabel] = sectionShape(pageKey, slotKey);
         const preview = m
           ? mediaThumbHTML(m, 'slot__media')
           : '<span class="slot__empty">Not set</span>';
         return `
           <div class="slot">
-            <div class="slot__preview">${preview}</div>
+            <div class="slot__preview" style="aspect-ratio:${ratio};">${preview}</div>
             <div class="slot__body">
               <p class="slot__name">${slotLabel}</p>
-              <p class="slot__meta">${m ? `${m.type === 'video' ? 'Video' : 'Photo'} · ${m.fit === 'contain' ? 'Fit whole frame' : 'Fill frame'} · ${escapeHtml(m.position)}` : '—'}</p>
-              <p class="slot__path">${m ? escapeHtml(m.url) : '(not set)'}</p>
+              <p class="slot__shape">${shapeLabel}</p>
+              <p class="slot__meta">${m ? `${m.type === 'video' ? 'Video' : 'Photo'} · ${m.fit === 'contain' ? 'Whole image shown' : 'Fills the slot'}` : 'Empty'}</p>
             </div>
             <div class="slot__actions">
-              <button class="btn btn--gold btn--sm btn--block" data-action="replace-section" data-page="${pageKey}" data-slot="${slotKey}">Replace photo / video</button>
-              <button class="btn btn--ghost btn--sm btn--block" data-action="pick-section" data-page="${pageKey}" data-slot="${slotKey}">Choose from library</button>
-              ${m && m.type === 'image' ? `<button class="btn btn--ghost btn--sm btn--block" data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}">Crop / position</button>` : ''}
-              ${m && m.type === 'video' ? `<button class="btn btn--ghost btn--sm btn--block" data-action="fit-section" data-page="${pageKey}" data-slot="${slotKey}">${m.fit === 'contain' ? 'Switch to fill frame' : 'Switch to fit whole frame'}</button>` : ''}
+              ${m && m.type === 'image'
+                ? `<button class="btn btn--gold btn--sm btn--block" data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}">Adjust framing</button>`
+                : ''}
+              ${m && m.type === 'video'
+                ? `<button class="btn btn--gold btn--sm btn--block" data-action="fit-section" data-page="${pageKey}" data-slot="${slotKey}">${m.fit === 'contain' ? 'Fill the slot' : 'Show whole video'}</button>`
+                : ''}
+              <div class="slot__actions-row">
+                <button class="btn btn--ghost btn--sm" data-action="replace-section" data-page="${pageKey}" data-slot="${slotKey}">Upload</button>
+                <button class="btn btn--ghost btn--sm" data-action="pick-section" data-page="${pageKey}" data-slot="${slotKey}">Library</button>
+              </div>
             </div>
           </div>
         `;
@@ -980,7 +1024,10 @@ $('#sections-list').addEventListener('click', async (e) => {
         try {
           await saveSection(page, slot, updated);
         } catch (err) { toast(err.message, true); }
-      }, { aspect: '1.6' });
+      }, (() => {
+        const [ratio, label] = sectionShape(page, slot);
+        return { aspect: String(ratio), aspectLabel: label, lockAspect: true };
+      })());
       return;
 
     case 'fit-section':
@@ -1137,26 +1184,53 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
   return { getValue: () => items.slice() };
 }
 
-// ---------- Frame tool (crop & position) ----------
-//
-// Two ways to fit an oversized photo into a fixed slot:
-//
-//   Save framing   — non-destructive. Stores fit + focal point; the original
-//                    file is untouched and the site does the framing in CSS.
-//   Crop a copy    — destructive. Renders the visible region to a canvas and
-//                    uploads it as a new file, so the stored asset is already
-//                    the right shape (needed when you zoomed in).
-//
-// Aspect presets match the real slots on the site so what you frame here is what
-// ships.
-
+// Aspect presets, used when the caller doesn't already know the slot's shape.
+// Values are width ÷ height.
 const FRAME_ASPECTS = [
-  ['0.8', 'Product card / gallery (4:5)'],
+  ['0.8', 'Product / workshop card (4:5)'],
   ['1', 'Square (1:1)'],
   ['1.6', 'Section band (16:10)'],
   ['1.7778', 'Wide banner (16:9)'],
   ['3.2', 'Hero strip (16:5)'],
 ];
+
+// Fetch the bytes and hand back a same-origin blob URL.
+//
+// Why not just point an <img> at the remote URL: S3 returns
+// `Access-Control-Allow-Origin` ONLY when the request carries an `Origin`
+// header, and serves objects `immutable, max-age=31536000`. A plain <img> load
+// (no Origin) populates the HTTP cache with a header-less response, and a later
+// crossOrigin request for the same URL is served from that same cache entry —
+// so the canvas taints even though the bucket is configured correctly. Going
+// through fetch + blob sidesteps the image cache entirely, and a blob: URL is
+// same-origin so the canvas is always readable.
+async function loadCroppableImage(url) {
+  const res = await fetch(url, { mode: 'cors', cache: 'reload' });
+  if (!res.ok) throw new Error(`Could not load the file (HTTP ${res.status})`);
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error('That file could not be decoded as an image'));
+    img.src = objectUrl;
+  });
+  return { img, objectUrl };
+}
+
+// ---------- Frame tool (crop & position) ----------
+//
+// A photo-editor surface: the whole image is shown, the part that will be kept
+// is bright, and everything outside it is dimmed. Drag the box to move it, drag
+// a corner to resize. The box is locked to the shape of the slot the media is
+// going into, so what you see is what that slot will show.
+//
+// Two ways to save:
+//   Save framing — non-destructive, stores a focal point the site applies in
+//                  CSS. Only exact while the box is at full size, because CSS
+//                  `object-fit: cover` always shows the largest region that
+//                  fits; a shrunken box means you zoomed, which CSS can't express.
+//   Crop a copy  — renders the box to a canvas and uploads it as a new file.
 
 // The frame tool gets its own backdrop rather than reusing #modal-backdrop: it
 // is opened from inside the product/workshop form, and sharing the single modal
@@ -1166,9 +1240,17 @@ function openFrameLayer(bodyHtml) {
   $('#frame-backdrop').hidden = false;
 }
 
+// The crop tool decodes the source into a blob URL; release it whenever the
+// layer closes, however it was closed.
+let frameObjectUrl = null;
+
 function closeFrameLayer() {
   $('#frame-backdrop').hidden = true;
   $('#frame-body').innerHTML = '';
+  if (frameObjectUrl) {
+    URL.revokeObjectURL(frameObjectUrl);
+    frameObjectUrl = null;
+  }
 }
 
 $('#frame-close')?.addEventListener('click', closeFrameLayer);
@@ -1178,233 +1260,264 @@ $('#frame-backdrop')?.addEventListener('click', (e) => {
   if (e.target.closest('[data-frame-close]')) closeFrameLayer();
 });
 
-function openFrameModal(media, onSave, { aspect = '0.8' } = {}) {
+function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockAspect = false } = {}) {
   const m = normalizeMedia(media);
   openFrameLayer(`
     <div class="frame-tool">
-      <div class="frame-tool__stage" id="frame-stage">
-        <img id="frame-img" src="${escapeAttr(m.url)}" alt="" draggable="false">
+      <div class="frame-ws" id="frame-ws">
+        <img class="frame-ws__img" id="frame-img" alt="" draggable="false">
+        <div class="frame-crop" id="frame-crop" hidden>
+          <span class="frame-crop__handle" data-handle="nw"></span>
+          <span class="frame-crop__handle" data-handle="ne"></span>
+          <span class="frame-crop__handle" data-handle="se"></span>
+          <span class="frame-crop__handle" data-handle="sw"></span>
+        </div>
+        <p class="frame-ws__loading" id="frame-loading">Loading…</p>
       </div>
-      <div class="field-row">
+
+      <div class="frame-controls">
         <label class="field">
-          <span class="field__label">Frame shape</span>
-          <select id="frame-aspect">
-            ${FRAME_ASPECTS.map(([v, l]) => `<option value="${v}" ${v === aspect ? 'selected' : ''}>${l}</option>`).join('')}
-          </select>
-        </label>
-        <label class="field">
-          <span class="field__label">Fit</span>
+          <span class="field__label">How it fills the slot</span>
           <select id="frame-fit">
-            <option value="cover" ${m.fit === 'cover' ? 'selected' : ''}>Fill the frame (crops the overflow)</option>
-            <option value="contain" ${m.fit === 'contain' ? 'selected' : ''}>Fit the whole photo (leaves empty space)</option>
+            <option value="cover" ${m.fit === 'cover' ? 'selected' : ''}>Fill the slot — choose what stays in view</option>
+            <option value="contain" ${m.fit === 'contain' ? 'selected' : ''}>Fit the whole photo — leaves empty space</option>
           </select>
         </label>
+        ${lockAspect ? `
+          <div class="field">
+            <span class="field__label">Slot shape</span>
+            <p class="frame-shape-fixed">${escapeHtml(aspectLabel || 'Fixed by this slot')}</p>
+          </div>
+        ` : `
+          <label class="field">
+            <span class="field__label">Slot shape</span>
+            <select id="frame-aspect">
+              ${FRAME_ASPECTS.map(([v, l]) => `<option value="${v}" ${v === aspect ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </label>
+        `}
       </div>
-      <label class="field">
-        <span class="field__label">Zoom <span id="frame-zoom-val">100%</span></span>
-        <input type="range" id="frame-zoom" min="100" max="300" step="1" value="100">
-      </label>
-      <p class="field__hint" id="frame-hint">Drag the photo to choose which part stays in frame.</p>
-      <p class="field__hint">Frame shape previews how the photo sits in that slot — and, if you crop a copy, it is the shape the new file is cut to.</p>
+
+      <p class="field__hint" id="frame-hint">Drag the bright box to choose what stays in view. Drag a corner to zoom in.</p>
+
       <div class="form-actions">
+        <button type="button" class="btn btn--ghost btn--sm" id="frame-reset">Reset box</button>
+        <span class="form-actions__spacer"></span>
         <button type="button" class="btn btn--ghost" data-frame-close>Cancel</button>
-        <button type="button" class="btn btn--ghost" id="frame-crop">Crop &amp; save a copy</button>
+        <button type="button" class="btn btn--ghost" id="frame-crop-btn">Crop &amp; save a copy</button>
         <button type="button" class="btn btn--primary" id="frame-save">Save framing</button>
       </div>
     </div>
   `);
 
-  const stage = $('#frame-stage');
+  const ws = $('#frame-ws');
   const img = $('#frame-img');
-  const zoomInput = $('#frame-zoom');
+  const cropBox = $('#frame-crop');
   const fitSelect = $('#frame-fit');
   const aspectSelect = $('#frame-aspect');
+  const cropBtn = $('#frame-crop-btn');
 
-  // Layout state, all in stage pixels. `base` is the cover/contain scale at
-  // zoom 1; `ox/oy` is the image's top-left inside the stage.
-  const st = { base: 1, zoom: 1, ox: 0, oy: 0, nw: 0, nh: 0 };
+  // Geometry, all in workspace pixels.
+  //   disp{X,Y,W,H} — where the whole image is drawn (contain-fitted)
+  //   box{X,Y,W,H}  — the kept region, always inside the image
+  const g = { dispX: 0, dispY: 0, dispW: 0, dispH: 0, boxX: 0, boxY: 0, boxW: 0, boxH: 0, nw: 0, nh: 0 };
+  let source = null;          // { img, objectUrl } once the croppable copy loads
+  let croppable = false;
 
-  const stageSize = () => ({ w: stage.clientWidth, h: stage.clientHeight });
+  const ratio = () => Number(aspectSelect ? aspectSelect.value : aspect) || 0.8;
 
-  const clamp = () => {
-    const { w, h } = stageSize();
-    const dw = st.nw * st.base * st.zoom;
-    const dh = st.nh * st.base * st.zoom;
-    // 'cover' keeps the frame filled; 'contain' centres whatever is smaller.
-    st.ox = dw <= w ? (w - dw) / 2 : Math.min(0, Math.max(w - dw, st.ox));
-    st.oy = dh <= h ? (h - dh) / 2 : Math.min(0, Math.max(h - dh, st.oy));
+  // Largest box of the current aspect that fits inside the displayed image.
+  const maxBox = () => {
+    const a = ratio();
+    return g.dispW / g.dispH > a
+      ? { w: a * g.dispH, h: g.dispH }
+      : { w: g.dispW, h: g.dispW / a };
   };
 
   const paint = () => {
-    clamp();
-    const dw = st.nw * st.base * st.zoom;
-    const dh = st.nh * st.base * st.zoom;
+    const contain = fitSelect.value === 'contain';
+    cropBox.hidden = contain;
+    if (!contain) {
+      Object.assign(cropBox.style, {
+        left: `${g.dispX + g.boxX}px`,
+        top: `${g.dispY + g.boxY}px`,
+        width: `${g.boxW}px`,
+        height: `${g.boxH}px`,
+      });
+    }
+    const max = maxBox();
+    // A shrunken box means zoom, which a CSS focal point cannot reproduce.
+    const zoomed = !contain && (g.boxW < max.w - 1 || g.boxH < max.h - 1);
+    $('#frame-save').disabled = zoomed;
+    cropBtn.disabled = contain || !croppable;
+    $('#frame-hint').textContent = contain
+      ? 'The whole photo will be shown, with empty space around it. Nothing to position.'
+      : zoomed
+        ? 'Zoomed in — “Crop & save a copy” keeps this exactly. “Save framing” needs the box at full size.'
+        : 'Drag the bright box to choose what stays in view. Drag a corner to zoom in.';
+  };
+
+  // Keep the box inside the image and on-aspect.
+  const clampBox = () => {
+    const max = maxBox();
+    g.boxW = Math.min(g.boxW, max.w);
+    g.boxH = g.boxW / ratio();
+    if (g.boxH > g.dispH) { g.boxH = g.dispH; g.boxW = g.boxH * ratio(); }
+    g.boxX = Math.max(0, Math.min(g.dispW - g.boxW, g.boxX));
+    g.boxY = Math.max(0, Math.min(g.dispH - g.boxH, g.boxY));
+  };
+
+  // Place the box at full size, honouring the entry's stored focal point.
+  const resetBox = (focal) => {
+    const max = maxBox();
+    g.boxW = max.w;
+    g.boxH = max.h;
+    const [px, py] = String(focal || m.position).split(' ');
+    const fx = (parseFloat(px) || 50) / 100;
+    const fy = (parseFloat(py) || 50) / 100;
+    g.boxX = fx * (g.dispW - g.boxW);
+    g.boxY = fy * (g.dispH - g.boxH);
+    clampBox();
+    paint();
+  };
+
+  // Contain-fit the image into the workspace.
+  const layoutImage = () => {
+    const wsW = ws.clientWidth;
+    const wsH = ws.clientHeight;
+    const scale = Math.min(wsW / g.nw, wsH / g.nh);
+    g.dispW = g.nw * scale;
+    g.dispH = g.nh * scale;
+    g.dispX = (wsW - g.dispW) / 2;
+    g.dispY = (wsH - g.dispH) / 2;
     Object.assign(img.style, {
-      width: `${dw}px`, height: `${dh}px`, left: `${st.ox}px`, top: `${st.oy}px`,
+      left: `${g.dispX}px`, top: `${g.dispY}px`,
+      width: `${g.dispW}px`, height: `${g.dispH}px`,
     });
-    $('#frame-zoom-val').textContent = `${Math.round(st.zoom * 100)}%`;
-    // Zooming can't be expressed as a CSS focal point, so past 100% the only
-    // faithful way to keep it is a real crop.
-    $('#frame-save').disabled = st.zoom > 1.001;
-    $('#frame-hint').textContent = st.zoom > 1.001
-      ? 'Zoomed in — use “Crop & save a copy” to keep this exact framing.'
-      : 'Drag the photo to choose which part stays in frame. Saving framing keeps the original file untouched.';
   };
 
-  // Recompute the base scale for the current stage size and fit mode, keeping
-  // the focal point the drag/position already chose.
-  const layout = (keepFocal = true) => {
-    const ratio = Number(aspectSelect.value) || 0.8;
-    stage.style.aspectRatio = String(ratio);
-    const { w, h } = stageSize();
-    if (!st.nw || !st.nh) return;
-    const focal = keepFocal ? currentFocal() : { x: 0.5, y: 0.5 };
-    st.base = fitSelect.value === 'contain'
-      ? Math.min(w / st.nw, h / st.nh)
-      : Math.max(w / st.nw, h / st.nh);
-    const dw = st.nw * st.base * st.zoom;
-    const dh = st.nh * st.base * st.zoom;
-    st.ox = -(focal.x * (dw - w));
-    st.oy = -(focal.y * (dh - h));
-    paint();
-  };
-
-  // Focal point as the 0–1 fractions CSS object-position uses.
-  const currentFocal = () => {
-    const { w, h } = stageSize();
-    const dw = st.nw * st.base * st.zoom;
-    const dh = st.nh * st.base * st.zoom;
-    return {
-      x: dw > w ? Math.min(1, Math.max(0, -st.ox / (dw - w))) : 0.5,
-      y: dh > h ? Math.min(1, Math.max(0, -st.oy / (dh - h))) : 0.5,
+  // Load a croppable copy; fall back to a plain preview if the host blocks it.
+  (async () => {
+    try {
+      source = await loadCroppableImage(m.url);
+      croppable = true;
+      img.src = source.objectUrl;
+      frameObjectUrl = source.objectUrl;   // released by closeFrameLayer()
+    } catch (_) {
+      croppable = false;
+      img.src = m.url;                       // preview still works
+    }
+    const start = () => {
+      g.nw = img.naturalWidth || 1;
+      g.nh = img.naturalHeight || 1;
+      $('#frame-loading').hidden = true;
+      layoutImage();
+      resetBox();
+      if (!croppable) {
+        cropBtn.title = 'This file’s host blocks reading the pixels, so a copy can’t be cut. '
+          + 'Save framing instead — it needs no access to the file.';
+      }
     };
-  };
+    if (img.complete && img.naturalWidth) start();
+    else img.addEventListener('load', start, { once: true });
+  })();
 
-  img.addEventListener('load', () => {
-    st.nw = img.naturalWidth;
-    st.nh = img.naturalHeight;
-    // Seed from the entry's stored focal point.
-    const [px, py] = String(m.position).split(' ');
-    const seed = { x: (parseFloat(px) || 50) / 100, y: (parseFloat(py) || 50) / 100 };
-    st.base = 1; st.zoom = 1;
-    const ratio = Number(aspectSelect.value) || 0.8;
-    stage.style.aspectRatio = String(ratio);
-    const { w, h } = stageSize();
-    st.base = fitSelect.value === 'contain'
-      ? Math.min(w / st.nw, h / st.nh)
-      : Math.max(w / st.nw, h / st.nh);
-    st.ox = -(seed.x * (st.nw * st.base - w));
-    st.oy = -(seed.y * (st.nh * st.base - h));
-    paint();
-  });
-  // Deliberately no crossOrigin here: a host without CORS headers would refuse
-  // the request outright and the preview would go blank. Cropping re-fetches the
-  // file with crossOrigin set (see renderCrop) and degrades with a message.
-  img.src = m.url;
-
-  // Drag to pan.
+  // ---- pointer interaction: drag to move, corner to resize ----
   let drag = null;
-  stage.addEventListener('pointerdown', (e) => {
-    drag = { x: e.clientX, y: e.clientY, ox: st.ox, oy: st.oy };
-    stage.setPointerCapture(e.pointerId);
+  ws.addEventListener('pointerdown', (e) => {
+    if (cropBox.hidden) return;
+    const handle = e.target.closest('[data-handle]');
+    const inBox = e.target === cropBox || handle;
+    if (!inBox) return;
+    drag = {
+      handle: handle ? handle.dataset.handle : null,
+      x: e.clientX, y: e.clientY,
+      boxX: g.boxX, boxY: g.boxY, boxW: g.boxW, boxH: g.boxH,
+    };
+    ws.setPointerCapture(e.pointerId);
+    e.preventDefault();
   });
-  stage.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    st.ox = drag.ox + (e.clientX - drag.x);
-    st.oy = drag.oy + (e.clientY - drag.y);
-    paint();
-  });
-  ['pointerup', 'pointercancel'].forEach((ev) =>
-    stage.addEventListener(ev, () => { drag = null; }));
 
-  zoomInput.addEventListener('input', () => {
-    const focal = currentFocal();
-    st.zoom = Number(zoomInput.value) / 100;
-    const { w, h } = stageSize();
-    const dw = st.nw * st.base * st.zoom;
-    const dh = st.nh * st.base * st.zoom;
-    st.ox = -(focal.x * (dw - w));
-    st.oy = -(focal.y * (dh - h));
+  ws.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    if (!drag.handle) {
+      g.boxX = drag.boxX + dx;
+      g.boxY = drag.boxY + dy;
+    } else {
+      // Resize from the grabbed corner, keeping the opposite corner pinned.
+      const west = drag.handle.includes('w');
+      const north = drag.handle.includes('n');
+      const rightEdge = drag.boxX + drag.boxW;
+      const bottomEdge = drag.boxY + drag.boxH;
+      let w = west ? drag.boxW - dx : drag.boxW + dx;
+      w = Math.max(40, w);
+      let h = w / ratio();
+      if (west) g.boxX = rightEdge - w; else g.boxX = drag.boxX;
+      if (north) g.boxY = bottomEdge - h; else g.boxY = drag.boxY;
+      g.boxW = w;
+      g.boxH = h;
+      // Don't let a resize push the box off the image.
+      if (g.boxX < 0 || g.boxY < 0 || g.boxX + w > g.dispW || g.boxY + h > g.dispH) {
+        g.boxW = drag.boxW; g.boxH = drag.boxH; g.boxX = drag.boxX; g.boxY = drag.boxY;
+      }
+    }
+    clampBox();
     paint();
   });
-  fitSelect.addEventListener('change', () => layout());
-  aspectSelect.addEventListener('change', () => layout());
+  ['pointerup', 'pointercancel'].forEach((ev) => ws.addEventListener(ev, () => { drag = null; }));
+
+  fitSelect.addEventListener('change', paint);
+  aspectSelect?.addEventListener('change', () => resetBox(focalString()));
+  $('#frame-reset').addEventListener('click', () => resetBox('50% 50%'));
+
+  // The box's position within the image, as the percentages object-position uses.
+  const focalString = () => {
+    const fx = g.dispW > g.boxW ? (g.boxX / (g.dispW - g.boxW)) * 100 : 50;
+    const fy = g.dispH > g.boxH ? (g.boxY / (g.dispH - g.boxH)) * 100 : 50;
+    return `${fx.toFixed(1)}% ${fy.toFixed(1)}%`;
+  };
 
   $('#frame-save').addEventListener('click', () => {
-    const f = currentFocal();
-    onSave({
-      ...m,
-      fit: fitSelect.value,
-      position: `${(f.x * 100).toFixed(1)}% ${(f.y * 100).toFixed(1)}%`,
-    });
+    onSave({ ...m, fit: fitSelect.value, position: fitSelect.value === 'contain' ? '50% 50%' : focalString() });
     closeFrameLayer();
     toast('Framing saved');
   });
 
-  $('#frame-crop').addEventListener('click', async () => {
-    const btn = $('#frame-crop');
-    btn.disabled = true;
+  cropBtn.addEventListener('click', async () => {
+    cropBtn.disabled = true;
     try {
-      const file = await renderCrop(m.url, stage, st);
+      const scale = g.nw / g.dispW;        // display px → source px
+      const file = await renderCrop(source.img, {
+        sx: g.boxX * scale, sy: g.boxY * scale, sw: g.boxW * scale, sh: g.boxH * scale,
+      });
       const url = await uploadFile(file);
       onSave({ ...m, url, fit: 'cover', position: '50% 50%' });
       closeFrameLayer();
       toast('Cropped copy uploaded');
     } catch (err) {
-      btn.disabled = false;
+      cropBtn.disabled = false;
       toast(err.message, true);
     }
   });
 }
 
-// Render the region currently visible in the stage to a JPEG File. Output is
-// capped so a 6000px phone photo doesn't become a 6000px web asset.
+// Render a source rectangle to a JPEG File. Output is capped so a 6000px phone
+// photo doesn't become a 6000px web asset.
 const CROP_MAX_EDGE = 2400;
 
-const CORS_HELP = 'This file’s host doesn’t allow cropping (no CORS headers on the media bucket). '
-  + 'Use “Save framing” instead — it frames the photo without touching the file.';
-
-// Re-fetch the source with CORS enabled so the canvas stays readable. A host
-// that doesn't send the headers fails here rather than silently producing a
-// blank crop.
-function loadCorsImage(url) {
-  return new Promise((resolve, reject) => {
-    const im = new Image();
-    im.crossOrigin = 'anonymous';
-    im.onload = () => resolve(im);
-    im.onerror = () => reject(new Error(CORS_HELP));
-    im.src = url;
-  });
-}
-
-async function renderCrop(url, stage, st) {
-  const img = await loadCorsImage(url);
-  const w = stage.clientWidth;
-  const h = stage.clientHeight;
-  const scale = st.base * st.zoom;
-  // The visible window, expressed in the source image's own pixels.
-  const sx = -st.ox / scale;
-  const sy = -st.oy / scale;
-  const sw = w / scale;
-  const sh = h / scale;
-
+async function renderCrop(img, { sx, sy, sw, sh }) {
   const outScale = Math.min(1, CROP_MAX_EDGE / Math.max(sw, sh));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sw * outScale));
   canvas.height = Math.max(1, Math.round(sh * outScale));
   const ctx = canvas.getContext('2d');
-  // 'contain' can leave bars; fill them with white rather than transparent-black.
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-
   const blob = await new Promise((resolve, reject) => {
-    try {
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not render the crop'))), 'image/jpeg', 0.9);
-    } catch (e) {
-      // A tainted canvas means the media host didn't send CORS headers.
-      reject(new Error(CORS_HELP));
-    }
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not render the crop'))), 'image/jpeg', 0.9);
   });
   return new File([blob], 'cropped.jpg', { type: 'image/jpeg' });
 }
