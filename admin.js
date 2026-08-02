@@ -25,6 +25,9 @@ const state = {
   productSearch: '',
   productCategoryFilter: 'all',
   productPrintFilter: 'all',
+  // Server-side upload ceiling, refreshed from /api/admin/ping so the client can
+  // reject an oversized file before spending minutes sending it.
+  maxUploadMB: 100,
 };
 
 // ---------- HTTP ----------
@@ -237,16 +240,7 @@ function openProductModal(product) {
   const discValue = disc ? disc.value : '';
   openModal(isEdit ? `Edit ${p.name}` : 'New product', `
     <form id="product-form" class="form-grid" autocomplete="off">
-      <div class="upload" data-upload="product-image">
-        <div class="upload__preview" style="${p.images[0] ? `background-image:url('${p.images[0]}')` : ''}">${p.images[0] ? '' : 'No image'}</div>
-        <div class="upload__btns">
-          <button type="button" class="btn btn--ghost btn--sm" data-upload-trigger>Upload image</button>
-          <button type="button" class="btn btn--ghost btn--sm" data-upload-pick>Choose from gallery</button>
-          ${p.images[0] ? '<button type="button" class="btn btn--danger btn--sm" data-upload-clear>Clear</button>' : ''}
-        </div>
-        <input type="file" accept="image/*" class="upload__input">
-        <input type="hidden" name="image" value="${p.images[0] || ''}">
-      </div>
+      <div id="product-media"></div>
       <div class="field-row">
         <label class="field">
           <span class="field__label">Name</span>
@@ -334,7 +328,10 @@ function openProductModal(product) {
     </form>
   `);
 
-  wireUpload('[data-upload="product-image"]');
+  const mediaEditor = mountMediaEditor($('#product-media'), entityMedia(p, 'images'), {
+    label: 'Photos & videos',
+    hint: 'The first item is the primary photo — it is what shows on the shop card and in the cart. Reorder with ↑ ↓. Use Crop / position to fit an oversized photo to the frame.',
+  });
 
   $('#product-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -361,14 +358,9 @@ function openProductModal(product) {
         const v = Number(fd.get('discountValue'));
         return (t === 'percent' || t === 'flat') && v > 0 ? { type: t, value: v } : null;
       })(),
-      // The form only edits the primary (first) image. Preserve any additional
-      // gallery images on the existing product so editing doesn't collapse a
-      // multi-image product down to one.
-      images: (() => {
-        const primary = (fd.get('image') || '').toString().trim();
-        const rest = isEdit ? (product.images || []).slice(1) : [];
-        return primary ? [primary, ...rest] : rest;
-      })(),
+      // The full ordered gallery. The server derives `images` from it, so the
+      // two fields can't drift apart.
+      media: mediaEditor.getValue(),
     };
     try {
       if (isEdit) {
@@ -460,16 +452,7 @@ function openWorkshopModal(workshop) {
   const hasPrice = w.price != null && w.price !== '';
   openModal(isEdit ? `Edit ${w.title}` : 'New workshop', `
     <form id="workshop-form" class="form-grid" autocomplete="off">
-      <div class="upload" data-upload="workshop-image">
-        <div class="upload__preview" style="${w.image ? `background-image:url('${w.image}')` : ''}">${w.image ? '' : 'No image'}</div>
-        <div class="upload__btns">
-          <button type="button" class="btn btn--ghost btn--sm" data-upload-trigger>Upload image</button>
-          <button type="button" class="btn btn--ghost btn--sm" data-upload-pick>Choose from gallery</button>
-          ${w.image ? '<button type="button" class="btn btn--danger btn--sm" data-upload-clear>Clear</button>' : ''}
-        </div>
-        <input type="file" accept="image/*" class="upload__input">
-        <input type="hidden" name="image" value="${w.image || ''}">
-      </div>
+      <div id="workshop-media"></div>
       <div class="field-row">
         <label class="field">
           <span class="field__label">Title</span>
@@ -554,6 +537,7 @@ function openWorkshopModal(workshop) {
         <span class="field__label">"Ideal for" (one per line) — corporate / curated only</span>
         <textarea name="idealFor">${escapeHtml((w.idealFor || []).join('\n'))}</textarea>
       </label>
+      <div id="workshop-gallery-media"></div>
       <div class="form-actions">
         <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
         <button type="submit" class="btn btn--primary">${isEdit ? 'Save changes' : 'Create workshop'}</button>
@@ -561,7 +545,14 @@ function openWorkshopModal(workshop) {
     </form>
   `);
 
-  wireUpload('[data-upload="workshop-image"]');
+  const wsMedia = mountMediaEditor($('#workshop-media'), entityMedia(w, 'image'), {
+    label: 'Photos & videos',
+    hint: 'The first item is the hero and the card image; a second one fills the wide banner on the detail page.',
+  });
+  const wsGallery = mountMediaEditor($('#workshop-gallery-media'), w.gallery, {
+    label: 'Photo gallery (mosaic)',
+    hint: 'Shown as a mosaic wall on the workshop detail page — this is where corporate session photos go. Leave empty to hide the section.',
+  });
 
   $('#workshop-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -579,7 +570,8 @@ function openWorkshopModal(workshop) {
       tags: splitCSV(fd.get('tags')),
       seatsBooked: Number(fd.get('seatsBooked')) || 0,
       totalSeats: Number(fd.get('totalSeats')) || 0,
-      image: fd.get('image'),
+      media: wsMedia.getValue(),
+      gallery: wsGallery.getValue(),
       includes: (fd.get('includes') || '').toString().split('\n').map((s) => s.trim()).filter(Boolean),
       idealFor: (fd.get('idealFor') || '').toString().split('\n').map((s) => s.trim()).filter(Boolean),
     };
@@ -909,17 +901,25 @@ function renderSections() {
     const slotsHtml = Object.entries(labels)
       .filter(([k]) => k !== '_title')
       .map(([slotKey, slotLabel]) => {
-        const url = state.sections[pageKey][slotKey] || '';
+        // A slot value is a media entry; records saved before the media model
+        // are bare URL strings, which normalizeMedia() upgrades on read.
+        const m = normalizeMedia(state.sections[pageKey][slotKey]);
+        const preview = m
+          ? mediaThumbHTML(m, 'slot__media')
+          : '<span class="slot__empty">Not set</span>';
         return `
           <div class="slot">
-            <div class="slot__preview" style="${url ? `background-image:url('${url}')` : ''}"></div>
+            <div class="slot__preview">${preview}</div>
             <div class="slot__body">
               <p class="slot__name">${slotLabel}</p>
-              <p class="slot__path">${url || '(not set)'}</p>
+              <p class="slot__meta">${m ? `${m.type === 'video' ? 'Video' : 'Photo'} · ${m.fit === 'contain' ? 'Fit whole frame' : 'Fill frame'} · ${escapeHtml(m.position)}` : '—'}</p>
+              <p class="slot__path">${m ? escapeHtml(m.url) : '(not set)'}</p>
             </div>
             <div class="slot__actions">
-              <button class="btn btn--gold btn--sm btn--block" data-action="replace-section" data-page="${pageKey}" data-slot="${slotKey}">Replace image</button>
-              <button class="btn btn--ghost btn--sm btn--block" data-action="pick-section" data-page="${pageKey}" data-slot="${slotKey}">Choose from gallery</button>
+              <button class="btn btn--gold btn--sm btn--block" data-action="replace-section" data-page="${pageKey}" data-slot="${slotKey}">Replace photo / video</button>
+              <button class="btn btn--ghost btn--sm btn--block" data-action="pick-section" data-page="${pageKey}" data-slot="${slotKey}">Choose from library</button>
+              ${m && m.type === 'image' ? `<button class="btn btn--ghost btn--sm btn--block" data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}">Crop / position</button>` : ''}
+              ${m && m.type === 'video' ? `<button class="btn btn--ghost btn--sm btn--block" data-action="fit-section" data-page="${pageKey}" data-slot="${slotKey}">${m.fit === 'contain' ? 'Switch to fill frame' : 'Switch to fit whole frame'}</button>` : ''}
             </div>
           </div>
         `;
@@ -933,43 +933,486 @@ function renderSections() {
   });
 }
 
+// Save a slot. Fields omitted from `patch` keep their stored value, so framing
+// survives a photo swap only when the caller means it to.
+async function saveSection(page, slot, patch) {
+  await api('PUT', `/api/admin/sections/${page}/${slot}`, patch);
+  toast('Section updated');
+  loadAll();
+}
+
 $('#sections-list').addEventListener('click', async (e) => {
-  const pickBtn = e.target.closest('[data-action="pick-section"]');
-  if (pickBtn) {
-    const { page, slot } = pickBtn.dataset;
-    openGalleryPicker({ onSelect: async (item) => {
-      try {
-        await api('PUT', `/api/admin/sections/${page}/${slot}`, { url: item.url });
-        toast('Section image updated');
-        loadAll();
-      } catch (err) { toast(err.message, true); }
-    } });
-    return;
-  }
-  const btn = e.target.closest('[data-action="replace-section"]');
+  const btn = e.target.closest('[data-action]');
   if (!btn) return;
   const { page, slot } = btn.dataset;
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.onchange = async () => {
-    const file = input.files[0];
-    if (!file) return;
-    try {
-      const url = await uploadFile(file);
-      await api('PUT', `/api/admin/sections/${page}/${slot}`, { url });
-      toast('Section image updated');
-      loadAll();
-    } catch (err) { toast(err.message, true); }
-  };
-  input.click();
+  const current = normalizeMedia(state.sections[page] && state.sections[page][slot]);
+
+  switch (btn.dataset.action) {
+    case 'pick-section':
+      // A new asset starts centred and filling the frame; re-frame it after.
+      openGalleryPicker({ onSelect: async (item) => {
+        try {
+          await saveSection(page, slot, { url: item.url, type: item.type, fit: 'cover', position: '50% 50%' });
+        } catch (err) { toast(err.message, true); }
+      } });
+      return;
+
+    case 'replace-section': {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = MEDIA_ACCEPT;
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        try {
+          checkUploadSize(file);
+          const [m] = await uploadFiles([file]);
+          await saveSection(page, slot, { url: m.url, type: m.type, fit: 'cover', position: '50% 50%' });
+        } catch (err) { toast(err.message, true); }
+      };
+      input.click();
+      return;
+    }
+
+    case 'frame-section':
+      if (!current) return;
+      openFrameModal(current, async (updated) => {
+        try {
+          await saveSection(page, slot, updated);
+        } catch (err) { toast(err.message, true); }
+      }, { aspect: '1.6' });
+      return;
+
+    case 'fit-section':
+      // Videos can't go through the crop tool, so they get a plain fit toggle.
+      if (!current) return;
+      try {
+        await saveSection(page, slot, { fit: current.fit === 'contain' ? 'cover' : 'contain' });
+      } catch (err) { toast(err.message, true); }
+      return;
+
+    default:
+  }
 });
+
+// ---------- Media model ----------
+//
+// A media entry is `{ url, type:'image'|'video', fit:'cover'|'contain', position:'x% y%' }`.
+// Records written before the media model store bare URL strings, so everything
+// here accepts both shapes. `fit`/`position` decide how an oversized asset sits
+// in a fixed frame on the public site — that is what the Frame tool below edits.
+
+const VIDEO_URL_RE = /\.(mp4|webm|mov|ogg|ogv|mkv)(\?|#|$)/i;
+const MEDIA_ACCEPT = 'image/*,video/*,.heic,.heif';
+
+function normalizeMedia(raw) {
+  if (!raw) return null;
+  const o = typeof raw === 'string' ? { url: raw } : raw;
+  const url = String(o.url || '').trim();
+  if (!url) return null;
+  return {
+    url,
+    type: o.type === 'video' || (!o.type && VIDEO_URL_RE.test(url)) ? 'video' : 'image',
+    fit: o.fit === 'contain' ? 'contain' : 'cover',
+    position: o.position || '50% 50%',
+  };
+}
+
+function normalizeMediaList(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(normalizeMedia).filter(Boolean);
+}
+
+// The gallery for a record, falling back to its legacy single-field shape so a
+// product/workshop saved before the media model still opens with its art.
+function entityMedia(entity, legacyKey) {
+  if (!entity) return [];
+  if (Array.isArray(entity.media) && entity.media.length) return normalizeMediaList(entity.media);
+  const legacy = entity[legacyKey];
+  return normalizeMediaList(Array.isArray(legacy) ? legacy : (legacy ? [legacy] : []));
+}
+
+// Inline style that reproduces on a preview exactly what the public site will do
+// with this entry.
+function mediaFitStyle(m) {
+  return `object-fit:${m.fit};object-position:${m.position};`;
+}
+
+function mediaThumbHTML(m, cls) {
+  return m.type === 'video'
+    ? `<video class="${cls}" src="${escapeAttr(m.url)}#t=0.1" style="${mediaFitStyle(m)}" muted playsinline preload="metadata"></video>`
+    : `<img class="${cls}" src="${escapeAttr(m.url)}" alt="" style="${mediaFitStyle(m)}">`;
+}
+
+// ---------- Media list editor ----------
+//
+// Multi-item photo/video editor used by the product and workshop forms (and for
+// a workshop's mosaic gallery). Mount it on a container, read it back with
+// `getValue()` when the form submits.
+//
+//   mountMediaEditor(container, items, { label, hint })
+
+function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {}) {
+  if (!container) return { getValue: () => [] };
+  let items = normalizeMediaList(initial);
+
+  container.innerHTML = `
+    <div class="media-editor">
+      <div class="media-editor__head">
+        <span class="field__label">${escapeHtml(label)}</span>
+        <div class="media-editor__head-actions">
+          <button type="button" class="btn btn--ghost btn--sm" data-media-add>+ Upload</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-media-pick>Choose from library</button>
+        </div>
+      </div>
+      ${hint ? `<p class="field__hint">${escapeHtml(hint)}</p>` : ''}
+      <div class="media-editor__list" data-media-list></div>
+      <input type="file" accept="${MEDIA_ACCEPT}" multiple hidden data-media-input>
+    </div>
+  `;
+
+  const list = $('[data-media-list]', container);
+  const fileInput = $('[data-media-input]', container);
+
+  const render = () => {
+    if (!items.length) {
+      list.innerHTML = '<p class="media-editor__empty">Nothing added yet. Upload a photo or video, or choose one from the library.</p>';
+      return;
+    }
+    list.innerHTML = items.map((m, i) => `
+      <div class="media-item" data-index="${i}">
+        <div class="media-item__thumb">${mediaThumbHTML(m, 'media-item__media')}</div>
+        <div class="media-item__body">
+          <p class="media-item__role">${i === 0 ? 'Primary — used on cards and in the cart' : `Item ${i + 1}`}</p>
+          <p class="media-item__meta">${m.type === 'video' ? 'Video' : 'Photo'} · ${m.fit === 'contain' ? 'Fit whole frame' : 'Fill frame'} · ${escapeHtml(m.position)}</p>
+          <p class="media-item__url">${escapeHtml(m.url)}</p>
+        </div>
+        <div class="media-item__actions">
+          <button type="button" class="btn btn--ghost btn--sm" data-media-up ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-media-down ${i === items.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+          ${m.type === 'image' ? '<button type="button" class="btn btn--gold btn--sm" data-media-frame>Crop / position</button>' : ''}
+          <button type="button" class="btn btn--danger btn--sm" data-media-remove>Remove</button>
+        </div>
+      </div>
+    `).join('');
+  };
+
+  const add = (added) => { items = items.concat(added.filter(Boolean)); render(); };
+
+  $('[data-media-add]', container).addEventListener('click', () => fileInput.click());
+  $('[data-media-pick]', container).addEventListener('click', () => {
+    openGalleryPicker({ onSelect: (item) => add([normalizeMedia({ url: item.url, type: item.type })]) });
+  });
+
+  fileInput.addEventListener('change', async () => {
+    const files = Array.from(fileInput.files || []);
+    fileInput.value = '';
+    if (!files.length) return;
+    toast(`Uploading ${files.length} file${files.length > 1 ? 's' : ''}…`);
+    try {
+      add(await uploadFiles(files));
+      toast('Uploaded to the library');
+    } catch (err) { toast(err.message, true); }
+  });
+
+  list.addEventListener('click', (e) => {
+    const row = e.target.closest('[data-index]');
+    if (!row) return;
+    const i = Number(row.dataset.index);
+    if (e.target.closest('[data-media-up]')) {
+      [items[i - 1], items[i]] = [items[i], items[i - 1]];
+      render();
+    } else if (e.target.closest('[data-media-down]')) {
+      [items[i + 1], items[i]] = [items[i], items[i + 1]];
+      render();
+    } else if (e.target.closest('[data-media-remove]')) {
+      items.splice(i, 1);
+      render();
+    } else if (e.target.closest('[data-media-frame]')) {
+      openFrameModal(items[i], (updated) => { items[i] = updated; render(); });
+    }
+  });
+
+  render();
+  return { getValue: () => items.slice() };
+}
+
+// ---------- Frame tool (crop & position) ----------
+//
+// Two ways to fit an oversized photo into a fixed slot:
+//
+//   Save framing   — non-destructive. Stores fit + focal point; the original
+//                    file is untouched and the site does the framing in CSS.
+//   Crop a copy    — destructive. Renders the visible region to a canvas and
+//                    uploads it as a new file, so the stored asset is already
+//                    the right shape (needed when you zoomed in).
+//
+// Aspect presets match the real slots on the site so what you frame here is what
+// ships.
+
+const FRAME_ASPECTS = [
+  ['0.8', 'Product card / gallery (4:5)'],
+  ['1', 'Square (1:1)'],
+  ['1.6', 'Section band (16:10)'],
+  ['1.7778', 'Wide banner (16:9)'],
+  ['3.2', 'Hero strip (16:5)'],
+];
+
+// The frame tool gets its own backdrop rather than reusing #modal-backdrop: it
+// is opened from inside the product/workshop form, and sharing the single modal
+// would wipe out the half-filled form underneath it.
+function openFrameLayer(bodyHtml) {
+  $('#frame-body').innerHTML = bodyHtml;
+  $('#frame-backdrop').hidden = false;
+}
+
+function closeFrameLayer() {
+  $('#frame-backdrop').hidden = true;
+  $('#frame-body').innerHTML = '';
+}
+
+$('#frame-close')?.addEventListener('click', closeFrameLayer);
+$('#frame-backdrop')?.addEventListener('click', (e) => {
+  if (e.target === $('#frame-backdrop') || e.target.matches('[data-frame-close]')) closeFrameLayer();
+});
+
+function openFrameModal(media, onSave, { aspect = '0.8' } = {}) {
+  const m = normalizeMedia(media);
+  openFrameLayer(`
+    <div class="frame-tool">
+      <div class="frame-tool__stage" id="frame-stage">
+        <img id="frame-img" src="${escapeAttr(m.url)}" alt="" draggable="false">
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span class="field__label">Frame shape</span>
+          <select id="frame-aspect">
+            ${FRAME_ASPECTS.map(([v, l]) => `<option value="${v}" ${v === aspect ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">Fit</span>
+          <select id="frame-fit">
+            <option value="cover" ${m.fit === 'cover' ? 'selected' : ''}>Fill the frame (crops the overflow)</option>
+            <option value="contain" ${m.fit === 'contain' ? 'selected' : ''}>Fit the whole photo (leaves empty space)</option>
+          </select>
+        </label>
+      </div>
+      <label class="field">
+        <span class="field__label">Zoom <span id="frame-zoom-val">100%</span></span>
+        <input type="range" id="frame-zoom" min="100" max="300" step="1" value="100">
+      </label>
+      <p class="field__hint" id="frame-hint">Drag the photo to choose which part stays in frame.</p>
+      <p class="field__hint">Frame shape previews how the photo sits in that slot — and, if you crop a copy, it is the shape the new file is cut to.</p>
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" data-frame-close>Cancel</button>
+        <button type="button" class="btn btn--ghost" id="frame-crop">Crop &amp; save a copy</button>
+        <button type="button" class="btn btn--primary" id="frame-save">Save framing</button>
+      </div>
+    </div>
+  `);
+
+  const stage = $('#frame-stage');
+  const img = $('#frame-img');
+  const zoomInput = $('#frame-zoom');
+  const fitSelect = $('#frame-fit');
+  const aspectSelect = $('#frame-aspect');
+
+  // Layout state, all in stage pixels. `base` is the cover/contain scale at
+  // zoom 1; `ox/oy` is the image's top-left inside the stage.
+  const st = { base: 1, zoom: 1, ox: 0, oy: 0, nw: 0, nh: 0 };
+
+  const stageSize = () => ({ w: stage.clientWidth, h: stage.clientHeight });
+
+  const clamp = () => {
+    const { w, h } = stageSize();
+    const dw = st.nw * st.base * st.zoom;
+    const dh = st.nh * st.base * st.zoom;
+    // 'cover' keeps the frame filled; 'contain' centres whatever is smaller.
+    st.ox = dw <= w ? (w - dw) / 2 : Math.min(0, Math.max(w - dw, st.ox));
+    st.oy = dh <= h ? (h - dh) / 2 : Math.min(0, Math.max(h - dh, st.oy));
+  };
+
+  const paint = () => {
+    clamp();
+    const dw = st.nw * st.base * st.zoom;
+    const dh = st.nh * st.base * st.zoom;
+    Object.assign(img.style, {
+      width: `${dw}px`, height: `${dh}px`, left: `${st.ox}px`, top: `${st.oy}px`,
+    });
+    $('#frame-zoom-val').textContent = `${Math.round(st.zoom * 100)}%`;
+    // Zooming can't be expressed as a CSS focal point, so past 100% the only
+    // faithful way to keep it is a real crop.
+    $('#frame-save').disabled = st.zoom > 1.001;
+    $('#frame-hint').textContent = st.zoom > 1.001
+      ? 'Zoomed in — use “Crop & save a copy” to keep this exact framing.'
+      : 'Drag the photo to choose which part stays in frame. Saving framing keeps the original file untouched.';
+  };
+
+  // Recompute the base scale for the current stage size and fit mode, keeping
+  // the focal point the drag/position already chose.
+  const layout = (keepFocal = true) => {
+    const ratio = Number(aspectSelect.value) || 0.8;
+    stage.style.aspectRatio = String(ratio);
+    const { w, h } = stageSize();
+    if (!st.nw || !st.nh) return;
+    const focal = keepFocal ? currentFocal() : { x: 0.5, y: 0.5 };
+    st.base = fitSelect.value === 'contain'
+      ? Math.min(w / st.nw, h / st.nh)
+      : Math.max(w / st.nw, h / st.nh);
+    const dw = st.nw * st.base * st.zoom;
+    const dh = st.nh * st.base * st.zoom;
+    st.ox = -(focal.x * (dw - w));
+    st.oy = -(focal.y * (dh - h));
+    paint();
+  };
+
+  // Focal point as the 0–1 fractions CSS object-position uses.
+  const currentFocal = () => {
+    const { w, h } = stageSize();
+    const dw = st.nw * st.base * st.zoom;
+    const dh = st.nh * st.base * st.zoom;
+    return {
+      x: dw > w ? Math.min(1, Math.max(0, -st.ox / (dw - w))) : 0.5,
+      y: dh > h ? Math.min(1, Math.max(0, -st.oy / (dh - h))) : 0.5,
+    };
+  };
+
+  img.addEventListener('load', () => {
+    st.nw = img.naturalWidth;
+    st.nh = img.naturalHeight;
+    // Seed from the entry's stored focal point.
+    const [px, py] = String(m.position).split(' ');
+    const seed = { x: (parseFloat(px) || 50) / 100, y: (parseFloat(py) || 50) / 100 };
+    st.base = 1; st.zoom = 1;
+    const ratio = Number(aspectSelect.value) || 0.8;
+    stage.style.aspectRatio = String(ratio);
+    const { w, h } = stageSize();
+    st.base = fitSelect.value === 'contain'
+      ? Math.min(w / st.nw, h / st.nh)
+      : Math.max(w / st.nw, h / st.nh);
+    st.ox = -(seed.x * (st.nw * st.base - w));
+    st.oy = -(seed.y * (st.nh * st.base - h));
+    paint();
+  });
+  // Deliberately no crossOrigin here: a host without CORS headers would refuse
+  // the request outright and the preview would go blank. Cropping re-fetches the
+  // file with crossOrigin set (see renderCrop) and degrades with a message.
+  img.src = m.url;
+
+  // Drag to pan.
+  let drag = null;
+  stage.addEventListener('pointerdown', (e) => {
+    drag = { x: e.clientX, y: e.clientY, ox: st.ox, oy: st.oy };
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    st.ox = drag.ox + (e.clientX - drag.x);
+    st.oy = drag.oy + (e.clientY - drag.y);
+    paint();
+  });
+  ['pointerup', 'pointercancel'].forEach((ev) =>
+    stage.addEventListener(ev, () => { drag = null; }));
+
+  zoomInput.addEventListener('input', () => {
+    const focal = currentFocal();
+    st.zoom = Number(zoomInput.value) / 100;
+    const { w, h } = stageSize();
+    const dw = st.nw * st.base * st.zoom;
+    const dh = st.nh * st.base * st.zoom;
+    st.ox = -(focal.x * (dw - w));
+    st.oy = -(focal.y * (dh - h));
+    paint();
+  });
+  fitSelect.addEventListener('change', () => layout());
+  aspectSelect.addEventListener('change', () => layout());
+
+  $('#frame-save').addEventListener('click', () => {
+    const f = currentFocal();
+    onSave({
+      ...m,
+      fit: fitSelect.value,
+      position: `${(f.x * 100).toFixed(1)}% ${(f.y * 100).toFixed(1)}%`,
+    });
+    closeFrameLayer();
+    toast('Framing saved');
+  });
+
+  $('#frame-crop').addEventListener('click', async () => {
+    const btn = $('#frame-crop');
+    btn.disabled = true;
+    try {
+      const file = await renderCrop(m.url, stage, st);
+      const url = await uploadFile(file);
+      onSave({ ...m, url, fit: 'cover', position: '50% 50%' });
+      closeFrameLayer();
+      toast('Cropped copy uploaded');
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, true);
+    }
+  });
+}
+
+// Render the region currently visible in the stage to a JPEG File. Output is
+// capped so a 6000px phone photo doesn't become a 6000px web asset.
+const CROP_MAX_EDGE = 2400;
+
+const CORS_HELP = 'This file’s host doesn’t allow cropping (no CORS headers on the media bucket). '
+  + 'Use “Save framing” instead — it frames the photo without touching the file.';
+
+// Re-fetch the source with CORS enabled so the canvas stays readable. A host
+// that doesn't send the headers fails here rather than silently producing a
+// blank crop.
+function loadCorsImage(url) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = () => resolve(im);
+    im.onerror = () => reject(new Error(CORS_HELP));
+    im.src = url;
+  });
+}
+
+async function renderCrop(url, stage, st) {
+  const img = await loadCorsImage(url);
+  const w = stage.clientWidth;
+  const h = stage.clientHeight;
+  const scale = st.base * st.zoom;
+  // The visible window, expressed in the source image's own pixels.
+  const sx = -st.ox / scale;
+  const sy = -st.oy / scale;
+  const sw = w / scale;
+  const sh = h / scale;
+
+  const outScale = Math.min(1, CROP_MAX_EDGE / Math.max(sw, sh));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(sw * outScale));
+  canvas.height = Math.max(1, Math.round(sh * outScale));
+  const ctx = canvas.getContext('2d');
+  // 'contain' can leave bars; fill them with white rather than transparent-black.
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+
+  const blob = await new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not render the crop'))), 'image/jpeg', 0.9);
+    } catch (e) {
+      // A tainted canvas means the media host didn't send CORS headers.
+      reject(new Error(CORS_HELP));
+    }
+  });
+  return new File([blob], 'cropped.jpg', { type: 'image/jpeg' });
+}
 
 // ---------- Upload helper ----------
 
 // Upload bytes only. Every upload auto-registers into the gallery library on the
 // backend; here we just need the returned URL for the field being edited.
 async function uploadFile(file) {
+  checkUploadSize(file);
   const fd = new FormData();
   fd.append('file', file);
   const res = await api('POST', '/api/admin/upload', fd, true);
@@ -979,12 +1422,40 @@ async function uploadFile(file) {
 // Upload with metadata (used by the Gallery tab's own upload form). Returns the
 // full { url, id, item } response so the caller gets the created library record.
 async function uploadImage(file, meta = {}) {
+  checkUploadSize(file);
   const fd = new FormData();
   fd.append('file', file);
   Object.entries(meta).forEach(([k, v]) => {
     if (v !== undefined && v !== null && v !== '') fd.append(k, v);
   });
   return api('POST', '/api/admin/upload', fd, true);
+}
+
+// Upload several files in sequence and return the created media entries. Each
+// one still registers itself in the gallery library, so a batch added to a
+// product also lands in the central library.
+async function uploadFiles(files) {
+  const out = [];
+  for (const file of files) {
+    checkUploadSize(file);
+    const res = await api('POST', '/api/admin/upload', (() => {
+      const fd = new FormData();
+      fd.append('file', file);
+      return fd;
+    })(), true);
+    out.push(normalizeMedia({ url: res.url, type: (res.item && res.item.type) || undefined }));
+  }
+  return out;
+}
+
+// The server caps uploads (MAX_UPLOAD_MB, reported by /api/admin/ping). Catching
+// an oversized file here gives a useful message instead of a long upload that
+// dies at the proxy.
+function checkUploadSize(file) {
+  const limit = (state.maxUploadMB || 100) * 1024 * 1024;
+  if (file.size > limit) {
+    throw new Error(`"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB — the limit is ${state.maxUploadMB || 100} MB. Compress it and try again.`);
+  }
 }
 
 // Read an image's intrinsic dimensions in the browser (for CLS + SEO metadata).
@@ -1062,10 +1533,15 @@ function renderGallery() {
       : 'No images yet. Click <strong>+ Upload image</strong> to add one to the library.');
     return;
   }
+  // Tiles are a uniform size and the asset is fitted whole inside it (letterboxed
+  // rather than cropped), so a portrait photo and a landscape one are directly
+  // comparable at a glance.
   grid.innerHTML = items.map((g) => `
     <div class="card">
-      <div class="card__img" style="${!isVideoItem(g) && g.url ? `background-image:url('${escapeAttr(g.url)}')` : ''}">
-        ${isVideoItem(g) ? `<video class="card__video" src="${escapeAttr(g.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="card__badge">▶ Video</span>` : ''}
+      <div class="card__img card__img--fit">
+        ${isVideoItem(g)
+          ? `<video class="card__media" src="${escapeAttr(g.url)}#t=0.1" muted playsinline preload="metadata"></video><span class="card__badge">▶ Video</span>`
+          : `<img class="card__media" src="${escapeAttr(g.url)}" alt="">`}
         <span class="card__tag ${g.public ? 'card__tag--public' : 'card__tag--private'}">${g.public ? 'Public' : 'Private'}</span>
       </div>
       <div class="card__body">
@@ -1219,7 +1695,10 @@ function renderPicker(q) {
     return;
   }
   grid.innerHTML = items.map((g) => `
-    <div class="picker-item" style="background-image:url('${escapeAttr(g.url)}')" data-pick="${g.id}" title="${escapeAttr(g.title)}">
+    <div class="picker-item" data-pick="${g.id}" title="${escapeAttr(g.title)}">
+      ${isVideoItem(g)
+        ? `<video class="picker-item__media" src="${escapeAttr(g.url)}#t=0.1" muted playsinline preload="metadata"></video>`
+        : `<img class="picker-item__media" src="${escapeAttr(g.url)}" alt="">`}
       <span class="picker-item__label">${escapeHtml(g.title)}</span>
     </div>
   `).join('');
@@ -1873,8 +2352,12 @@ $('#modal-backdrop').addEventListener('click', (e) => {
   if (e.target === $('#modal-backdrop')) closeModal();
   if (e.target.matches('[data-modal-close]')) closeModal();
 });
+// Escape closes the topmost open layer: frame tool → picker → edit modal.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('#modal-backdrop').hidden) closeModal();
+  if (e.key !== 'Escape') return;
+  if (!$('#frame-backdrop').hidden) closeFrameLayer();
+  else if (!$('#picker-backdrop').hidden) closePicker();
+  else if (!$('#modal-backdrop').hidden) closeModal();
 });
 
 // ---------- Toast ----------
@@ -1913,7 +2396,11 @@ function emptyState(msg) {
 if (state.token) {
   // verify session is still valid
   api('GET', '/api/admin/ping')
-    .then((data) => { state.email = (data && data.email) || ''; showApp(); })
+    .then((data) => {
+      state.email = (data && data.email) || '';
+      if (data && data.maxUploadMB) state.maxUploadMB = data.maxUploadMB;
+      showApp();
+    })
     .catch(showLogin);
 } else {
   showLogin();
