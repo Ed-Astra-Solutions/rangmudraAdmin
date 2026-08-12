@@ -43,6 +43,7 @@
       <nav class="admin-nav" role="tablist" aria-label="Admin sections">
         <button class="admin-tab" role="tab" data-tab="products" aria-selected="true">Products</button>
         <button class="admin-tab" role="tab" data-tab="orders" aria-selected="false">Orders</button>
+        <button class="admin-tab" role="tab" data-tab="enquiries" aria-selected="false">Enquiries</button>
         <button class="admin-tab" role="tab" data-tab="workshops" aria-selected="false">Workshops</button>
         <button class="admin-tab" role="tab" data-tab="blogs" aria-selected="false">Blogs</button>
         <button class="admin-tab" role="tab" data-tab="sections" aria-selected="false">Section Images</button>
@@ -104,6 +105,32 @@
           <button class="chip" data-status="cancelled">Cancelled</button>
         </div>
         <div id="orders-list"></div>
+      </section>
+
+      <!-- ============== ENQUIRIES ============== -->
+      <section class="panel" data-panel="enquiries" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Enquiries</h2>
+            <p class="panel__subtitle">Every lead the site collects — contact form, workshop bookings, and newsletter signups. Saved even when the notification email fails.</p>
+          </div>
+        </div>
+        <div class="product-toolbar">
+          <input type="search" id="enquiries-search" class="gallery-admin-search" placeholder="Search — name, email, phone, workshop, or message…" aria-label="Search enquiries">
+          <div class="filter-row" id="enquiry-type-filter">
+            <button class="chip active" data-type="all">All</button>
+            <button class="chip" data-type="contact">Contact form</button>
+            <button class="chip" data-type="workshop">Workshops</button>
+            <button class="chip" data-type="newsletter">Newsletter</button>
+          </div>
+          <div class="filter-row" id="enquiry-status-filter">
+            <button class="chip active" data-status="all">Any status</button>
+            <button class="chip" data-status="new">New</button>
+            <button class="chip" data-status="contacted">Contacted</button>
+            <button class="chip" data-status="closed">Closed</button>
+          </div>
+        </div>
+        <div id="enquiries-list"></div>
       </section>
 
       <!-- ============== WORKSHOPS ============== -->

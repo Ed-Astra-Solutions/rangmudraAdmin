@@ -19,6 +19,10 @@ const state = {
   discounts: [],
   orders: [],
   orderStatusFilter: 'all',
+  enquiries: [],
+  enquirySearch: '',
+  enquiryTypeFilter: 'all',
+  enquiryStatusFilter: 'all',
   gallery: [],
   gallerySearch: '',
   workshopCategoryFilter: 'all',
@@ -28,6 +32,10 @@ const state = {
   // Server-side upload ceiling, refreshed from /api/admin/ping so the client can
   // reject an oversized file before spending minutes sending it.
   maxUploadMB: 100,
+  // Whether the server can hand out presigned S3 PUTs (also from /ping). When
+  // true, files go browser → S3 directly; the first CORS/network failure flips
+  // this off for the session and everything falls back to the proxied POST.
+  directUpload: false,
 };
 
 // ---------- HTTP ----------
@@ -89,6 +97,11 @@ $('#login-form').addEventListener('submit', async (e) => {
     state.token = data.token;
     state.email = data.email || email;
     localStorage.setItem(TOKEN_KEY, state.token);
+    // Pick up the upload limits/capabilities the boot path gets from /ping.
+    api('GET', '/api/admin/ping').then((p) => {
+      if (p && p.maxUploadMB) state.maxUploadMB = p.maxUploadMB;
+      state.directUpload = !!(p && p.directUpload);
+    }).catch(() => {});
     showApp();
   } catch (e) {
     err.textContent = e.message;
@@ -141,6 +154,7 @@ async function loadAll() {
     loadSale();
     loadDiscounts();
     loadOrders();
+    loadEnquiries();
     loadGallery();
   } catch (e) {
     toast(e.message, true);
@@ -1015,8 +1029,8 @@ $('#sections-list').addEventListener('click', async (e) => {
         const file = input.files[0];
         if (!file) return;
         try {
-          checkUploadSize(file);
-          const [m] = await uploadFiles([file]);
+          const { items: [m], errors } = await uploadFiles([file]);
+          if (!m) throw new Error(errors[0].message);
           await saveSection(page, slot, { url: m.url, type: m.type, fit: 'cover', position: '50% 50%' });
         } catch (err) { toast(err.message, true); }
       };
@@ -1164,11 +1178,12 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
     const files = Array.from(fileInput.files || []);
     fileInput.value = '';
     if (!files.length) return;
-    toast(`Uploading ${files.length} file${files.length > 1 ? 's' : ''}…`);
-    try {
-      add(await uploadFiles(files));
-      toast('Uploaded to the library');
-    } catch (err) { toast(err.message, true); }
+    const { items, errors } = await uploadFiles(files, (done, total, file, frac) => {
+      const pct = frac ? ` ${Math.round(frac * 100)}%` : '';
+      toast(total === 1 ? `Uploading ${file.name}…${pct}` : `Uploading ${done + 1} of ${total} — ${file.name}…${pct}`);
+    });
+    if (items.length) add(items);
+    reportUploadResult(items.length, errors);
   });
 
   list.addEventListener('click', (e) => {
@@ -1533,20 +1548,73 @@ async function renderCrop(img, { sx, sy, sw, sh }) {
 
 // ---------- Upload helper ----------
 
-// Upload bytes only. Every upload auto-registers into the gallery library on the
-// backend; here we just need the returned URL for the field being edited.
-async function uploadFile(file) {
-  checkUploadSize(file);
-  const fd = new FormData();
-  fd.append('file', file);
-  const res = await api('POST', '/api/admin/upload', fd, true);
-  return res.url;
+// HEIC has to travel through the server: it is transcoded to JPEG there, which
+// can only happen if the bytes pass through. Everything else can go straight to
+// S3.
+const HEIC_FILE_RE = /\.(heic|heif)$/i;
+const needsServerTranscode = (file) =>
+  HEIC_FILE_RE.test(file.name || '') || /^image\/hei[cf]$/i.test(file.type || '');
+
+// PUT the file straight at S3 with a presigned URL, reporting real progress.
+//
+// fetch() can't report upload progress, so this is XHR. A CORS-blocked or
+// dropped PUT surfaces as a status-0 error, which the caller treats as "direct
+// upload isn't usable here" and falls back to the proxied route.
+function putToS3(uploadUrl, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl, true);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    // Must match the CacheControl that was signed, or S3 rejects the signature.
+    xhr.setRequestHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    xhr.upload.addEventListener('progress', (e) => {
+      if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+    });
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(Object.assign(new Error(`S3 refused the upload (HTTP ${xhr.status})`), { direct: true }));
+    });
+    xhr.addEventListener('error', () => reject(Object.assign(
+      new Error('Could not reach S3 directly'), { direct: true })));
+    xhr.addEventListener('abort', () => reject(Object.assign(
+      new Error('Upload cancelled'), { direct: true })));
+    xhr.send(file);
+  });
 }
 
-// Upload with metadata (used by the Gallery tab's own upload form). Returns the
-// full { url, id, item } response so the caller gets the created library record.
-async function uploadImage(file, meta = {}) {
+// The one upload path everything else calls. Returns the same
+// { url, id, item } shape whichever route it took.
+//
+//   direct  — presign → browser PUTs to S3 → register the library record.
+//             The bytes skip this app and its reverse proxy entirely, which is
+//             what makes big videos reliable.
+//   proxied — multipart POST to /api/admin/upload (the original route). Used
+//             for HEIC, when S3 isn't configured, and as the fallback whenever
+//             a direct attempt fails for a reason that isn't the file itself.
+async function uploadOne(file, meta = {}, onProgress) {
   checkUploadSize(file);
+
+  if (state.directUpload && !needsServerTranscode(file)) {
+    try {
+      const signed = await api('POST', '/api/admin/upload-url', {
+        filename: file.name,
+        contentType: file.type || '',
+        size: file.size,
+      });
+      await putToS3(signed.uploadUrl, file, onProgress);
+      return await api('POST', '/api/admin/upload-register', { key: signed.key, ...meta });
+    } catch (err) {
+      // A rejection from S3 itself (CORS not set, network wall) means direct
+      // upload isn't usable from this browser — stop trying for the session and
+      // fall through. A rejection from our own API (413 too large, 415 wrong
+      // type) is about the file, so let it stand.
+      if (!err.direct) throw err;
+      console.warn('[upload] direct-to-S3 failed, falling back to the server route:', err.message);
+      state.directUpload = false;
+    }
+  }
+
+  if (onProgress) onProgress(0);
   const fd = new FormData();
   fd.append('file', file);
   Object.entries(meta).forEach(([k, v]) => {
@@ -1555,21 +1623,56 @@ async function uploadImage(file, meta = {}) {
   return api('POST', '/api/admin/upload', fd, true);
 }
 
-// Upload several files in sequence and return the created media entries. Each
-// one still registers itself in the gallery library, so a batch added to a
-// product also lands in the central library.
-async function uploadFiles(files) {
-  const out = [];
+// Upload bytes only. Every upload auto-registers into the gallery library;
+// here we just need the returned URL for the field being edited.
+async function uploadFile(file) {
+  const res = await uploadOne(file);
+  return res.url;
+}
+
+// Upload with metadata (used by the Gallery tab's own upload form). Returns the
+// full { url, id, item } response so the caller gets the created library record.
+async function uploadImage(file, meta = {}, onProgress) {
+  return uploadOne(file, meta, onProgress);
+}
+
+// Upload several files in sequence. Each one still registers itself in the
+// gallery library, so a batch added to a product also lands in the central
+// library.
+//
+// A batch never throws: one bad file (oversized, unreadable, a network blip)
+// must not throw away the files that already uploaded, so failures are
+// collected and returned alongside the successes. `onProgress(doneCount,
+// total, file)` fires before each file starts.
+async function uploadFiles(files, onProgress) {
+  const items = [];
+  const errors = [];
+  let done = 0;
   for (const file of files) {
-    checkUploadSize(file);
-    const res = await api('POST', '/api/admin/upload', (() => {
-      const fd = new FormData();
-      fd.append('file', file);
-      return fd;
-    })(), true);
-    out.push(normalizeMedia({ url: res.url, type: (res.item && res.item.type) || undefined }));
+    if (onProgress) onProgress(done, files.length, file, 0);
+    try {
+      const res = await uploadOne(file, {}, (frac) => {
+        if (onProgress) onProgress(done, files.length, file, frac);
+      });
+      items.push(normalizeMedia({ url: res.url, type: (res.item && res.item.type) || undefined }));
+    } catch (err) {
+      errors.push({ file, message: err.message });
+    }
+    done += 1;
   }
-  return out;
+  return { items, errors };
+}
+
+// One toast for a whole batch: silent success, the single message when only one
+// file failed, and a partial-success summary when some got through.
+function reportUploadResult(okCount, errors, { done = 'uploaded to the library' } = {}) {
+  if (errors.length && !okCount) {
+    toast(errors.length === 1 ? errors[0].message : `All ${errors.length} files failed — ${errors[0].message}`, true);
+  } else if (errors.length) {
+    toast(`${okCount} ${done} · ${errors.length} failed — ${errors[0].message}`, true);
+  } else {
+    toast(okCount === 1 ? `1 file ${done}` : `${okCount} files ${done}`);
+  }
 }
 
 // The server caps uploads (MAX_UPLOAD_MB, reported by /api/admin/ping). Catching
@@ -1625,6 +1728,213 @@ function wireUpload(rootSel) {
       const url = await uploadFile(file);
       setImage(url);
       toast('Image uploaded to library');
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+// ---------- Enquiries ----------
+//
+// The read side of every lead the site collects. The content a customer sent is
+// never editable here — only the status and the studio's own notes — so the row
+// stays a faithful record of what arrived.
+
+const ENQUIRY_TYPE_META = {
+  contact: { label: 'Contact form' },
+  workshop: { label: 'Workshop' },
+  newsletter: { label: 'Newsletter' },
+};
+const ENQUIRY_STATUS_META = {
+  new: { label: 'New', cls: 'ostatus--created' },
+  contacted: { label: 'Contacted', cls: 'ostatus--shipped' },
+  closed: { label: 'Closed', cls: 'ostatus--delivered' },
+};
+
+function enquiryStatusBadge(status) {
+  const m = ENQUIRY_STATUS_META[status] || { label: status || 'New', cls: '' };
+  return `<span class="ostatus ${m.cls}">${escapeHtml(m.label)}</span>`;
+}
+
+// Date AND time — two enquiries on the same day are common, and knowing which
+// came first matters when you're calling people back.
+function enquiryDate(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+async function loadEnquiries() {
+  try {
+    state.enquiries = await api('GET', '/api/admin/enquiries');
+    renderEnquiries();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function enquiryMatches(e, q) {
+  if (!q) return true;
+  return [e.name, e.email, e.phone, e.company, e.workshopTitle, e.message]
+    .join(' ').toLowerCase().includes(q);
+}
+
+function renderEnquiries() {
+  const wrap = $('#enquiries-list');
+  if (!wrap) return;
+  const q = state.enquirySearch.trim().toLowerCase();
+  const list = state.enquiries.filter((e) =>
+    (state.enquiryTypeFilter === 'all' || e.type === state.enquiryTypeFilter)
+    && (state.enquiryStatusFilter === 'all' || (e.status || 'new') === state.enquiryStatusFilter)
+    && enquiryMatches(e, q));
+
+  if (!list.length) {
+    wrap.innerHTML = emptyState(state.enquiries.length
+      ? 'No enquiries match these filters.'
+      : 'No enquiries yet. Submissions from the contact form, workshop booking panel, and newsletter box land here.');
+    return;
+  }
+
+  wrap.innerHTML = list.map((e) => {
+    const type = (ENQUIRY_TYPE_META[e.type] || { label: e.type || 'Enquiry' }).label;
+    const who = [e.name, e.email].filter(Boolean).map(escapeHtml).join(' · ') || '—';
+    const about = e.type === 'workshop' && e.workshopTitle
+      ? ` · <strong>${escapeHtml(e.workshopTitle)}</strong>`
+      : '';
+    // A lead nobody was emailed about is the one that gets missed — call it out.
+    const unmailed = e.emailed === false
+      ? '<span class="order-tag" title="The studio notification email did not go out">Email failed</span>'
+      : '';
+    const preview = (e.message || '').replace(/\s+/g, ' ').slice(0, 140);
+    return `
+      <div class="admin-row order-row">
+        <div class="order-row__main">
+          <p class="order-row__title"><strong>${escapeHtml(type)}</strong> ${enquiryStatusBadge(e.status || 'new')} ${unmailed}</p>
+          <p class="admin-row__meta">${who}${about} · ${escapeHtml(enquiryDate(e.createdAt))}</p>
+          ${preview ? `<p class="admin-row__meta">${escapeHtml(preview)}${(e.message || '').length > 140 ? '…' : ''}</p>` : ''}
+        </div>
+        <div class="order-row__actions">
+          <button class="btn btn--ghost btn--sm" data-view-enquiry="${escapeAttr(e.id)}">View</button>
+          <button class="btn btn--ghost btn--sm" data-del-enquiry="${escapeAttr(e.id)}">Delete</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+$('#enquiries-list')?.addEventListener('click', (ev) => {
+  const view = ev.target.closest('[data-view-enquiry]');
+  if (view) {
+    const e = state.enquiries.find((x) => x.id === view.dataset.viewEnquiry);
+    if (e) openEnquiryModal(e);
+    return;
+  }
+  const del = ev.target.closest('[data-del-enquiry]');
+  if (del) confirmDeleteEnquiry(del.dataset.delEnquiry);
+});
+
+$('#enquiries-search')?.addEventListener('input', (e) => {
+  state.enquirySearch = e.target.value;
+  renderEnquiries();
+});
+
+$('#enquiry-type-filter')?.addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  state.enquiryTypeFilter = chip.dataset.type;
+  $$('#enquiry-type-filter .chip').forEach((c) => c.classList.toggle('active', c === chip));
+  renderEnquiries();
+});
+
+$('#enquiry-status-filter')?.addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  state.enquiryStatusFilter = chip.dataset.status;
+  $$('#enquiry-status-filter .chip').forEach((c) => c.classList.toggle('active', c === chip));
+  renderEnquiries();
+});
+
+function enquiryDetailRow(label, value, href) {
+  if (!value) return '';
+  const shown = href
+    ? `<a class="link-quiet" href="${escapeAttr(href)}">${escapeHtml(value)}</a>`
+    : escapeHtml(value);
+  return `<p class="admin-row__meta" style="margin-bottom:6px;"><strong>${escapeHtml(label)}:</strong> ${shown}</p>`;
+}
+
+function openEnquiryModal(e) {
+  const type = (ENQUIRY_TYPE_META[e.type] || { label: e.type || 'Enquiry' }).label;
+  openModal(`${type} — ${e.name || e.email || 'Enquiry'}`, `
+    <div class="form-grid">
+      <div>
+        ${enquiryDetailRow('Received', enquiryDate(e.createdAt))}
+        ${enquiryDetailRow('Name', e.name)}
+        ${enquiryDetailRow('Email', e.email, e.email ? `mailto:${e.email}` : '')}
+        ${enquiryDetailRow('Phone', e.phone, e.phone ? `tel:${e.phone.replace(/\s+/g, '')}` : '')}
+        ${enquiryDetailRow('Company', e.company)}
+        ${enquiryDetailRow('Workshop', e.workshopTitle)}
+        ${enquiryDetailRow('Group size', e.groupSize && String(e.groupSize))}
+        ${enquiryDetailRow('Preferred date', e.date)}
+        ${e.emailed === false ? `<p class="field__error">The studio notification email failed to send${e.emailError ? ` — ${escapeHtml(e.emailError)}` : ''}. The enquiry itself was saved.</p>` : ''}
+      </div>
+      ${e.message ? `
+        <div class="field">
+          <span class="field__label">Message</span>
+          <p class="admin-row__meta" style="white-space:pre-wrap;">${escapeHtml(e.message)}</p>
+        </div>
+      ` : ''}
+      <label class="field">
+        <span class="field__label">Status</span>
+        <select id="enq-status">
+          ${Object.entries(ENQUIRY_STATUS_META).map(([v, m]) =>
+            `<option value="${v}" ${(e.status || 'new') === v ? 'selected' : ''}>${m.label}</option>`).join('')}
+        </select>
+      </label>
+      <label class="field">
+        <span class="field__label">Internal notes (not sent to the customer)</span>
+        <textarea id="enq-notes" rows="4">${escapeHtml(e.notes || '')}</textarea>
+      </label>
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Close</button>
+        <button type="button" class="btn btn--primary" id="enq-save">Save</button>
+      </div>
+    </div>
+  `);
+
+  $('#enq-save').addEventListener('click', async () => {
+    const btn = $('#enq-save');
+    btn.disabled = true;
+    try {
+      const updated = await api('PUT', `/api/admin/enquiries/${e.id}`, {
+        status: $('#enq-status').value,
+        notes: $('#enq-notes').value,
+      });
+      const i = state.enquiries.findIndex((x) => x.id === e.id);
+      if (i !== -1) state.enquiries[i] = updated;
+      renderEnquiries();
+      closeModal();
+      toast('Enquiry updated');
+    } catch (err) {
+      toast(err.message, true);
+      btn.disabled = false;
+    }
+  });
+}
+
+function confirmDeleteEnquiry(id) {
+  const e = state.enquiries.find((x) => x.id === id);
+  openModal('Delete enquiry', `
+    <p style="color:var(--sc-l3);margin-bottom:24px;">Delete the enquiry from <strong>${escapeHtml((e && (e.name || e.email)) || 'this sender')}</strong>? This removes the only record of it.</p>
+    <div class="form-actions">
+      <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+      <button type="button" class="btn btn--danger" id="confirm-del-enquiry">Delete</button>
+    </div>
+  `);
+  $('#confirm-del-enquiry').addEventListener('click', async () => {
+    try {
+      await api('DELETE', `/api/admin/enquiries/${id}`);
+      state.enquiries = state.enquiries.filter((x) => x.id !== id);
+      renderEnquiries();
+      closeModal();
+      toast('Enquiry deleted');
     } catch (err) { toast(err.message, true); }
   });
 }
@@ -1724,19 +2034,27 @@ function wireGalleryFilePreview() {
   input.addEventListener('change', () => {
     releaseFilePreview();
     errEl.hidden = true;
-    const file = input.files[0];
+    const files = Array.from(input.files || []);
+    const file = files[0];
     if (!file) {
       box.innerHTML = '<span class="file-preview__empty">Nothing chosen yet</span>';
-      nameEl.textContent = 'No file chosen';
+      nameEl.textContent = 'No files chosen';
       return;
     }
 
-    const mb = file.size / 1024 / 1024;
-    nameEl.textContent = `${file.name} · ${mb < 1 ? `${Math.round(file.size / 1024)} KB` : `${mb.toFixed(1)} MB`}`;
+    // Only the first file gets a visual preview — the label carries the count.
+    const size = (bytes) => (bytes < 1024 * 1024 ? `${Math.round(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+    nameEl.textContent = files.length === 1
+      ? `${file.name} · ${size(file.size)}`
+      : `${files.length} files · ${size(totalBytes)} · previewing ${file.name}`;
 
-    // Flag an oversized file now instead of after a long failed upload.
-    if (mb > state.maxUploadMB) {
-      errEl.textContent = `This file is ${mb.toFixed(1)} MB — the limit is ${state.maxUploadMB} MB. Compress it and choose again.`;
+    // Flag oversized files now instead of after a long failed upload.
+    const tooBig = files.filter((f) => f.size / 1024 / 1024 > state.maxUploadMB);
+    if (tooBig.length) {
+      errEl.textContent = tooBig.length === 1
+        ? `"${tooBig[0].name}" is ${(tooBig[0].size / 1024 / 1024).toFixed(1)} MB — the limit is ${state.maxUploadMB} MB. Compress it and choose again.`
+        : `${tooBig.length} of these files are over the ${state.maxUploadMB} MB limit and will be skipped.`;
       errEl.hidden = false;
     }
 
@@ -1766,7 +2084,9 @@ function wireGalleryFilePreview() {
 
 function openGalleryForm(item) {
   const isEdit = !!item;
-  const g = item || { title: '', description: '', alt: '', tags: [], public: false };
+  // New uploads are public by default — the library is the site's design
+  // gallery, so hiding is the exception you opt into, not the default.
+  const g = item || { title: '', description: '', alt: '', tags: [], public: true };
   openEditor(isEdit ? `Edit — ${g.title}` : 'Upload media', `
     <form id="gallery-form" class="form-grid" autocomplete="off">
       ${isEdit ? `
@@ -1777,22 +2097,23 @@ function openGalleryForm(item) {
         </div>
       ` : `
         <div class="field">
-          <span class="field__label">Image or video file</span>
+          <span class="field__label">Image or video files</span>
           <div class="upload__preview file-preview" id="gallery-preview">
             <span class="file-preview__empty">Nothing chosen yet</span>
           </div>
           <div class="file-preview__bar">
-            <button type="button" class="btn btn--ghost btn--sm" id="gallery-file-btn">Choose file</button>
-            <span class="file-preview__name" id="gallery-file-name">No file chosen</span>
+            <button type="button" class="btn btn--ghost btn--sm" id="gallery-file-btn">Choose files</button>
+            <span class="file-preview__name" id="gallery-file-name">No files chosen</span>
           </div>
-          <input type="file" accept="image/*,video/*,.heic,.heif" name="file" id="gallery-file" required hidden>
-          <span class="field__hint">Images, HEIC (auto-converted to JPEG), and video up to ${state.maxUploadMB} MB.</span>
+          <input type="file" accept="image/*,video/*,.heic,.heif" name="file" id="gallery-file" multiple required hidden>
+          <span class="field__hint">Pick several at once — each becomes its own library record. Images, HEIC (auto-converted to JPEG), and video up to ${state.maxUploadMB} MB each.</span>
           <p class="field__error" id="gallery-file-error" hidden></p>
         </div>
       `}
       <label class="field">
         <span class="field__label">Title</span>
         <input name="title" required value="${escapeAttr(g.title)}">
+        ${isEdit ? '' : '<span class="field__hint">With several files, each record is numbered — "Indigo saree 1", "Indigo saree 2", and so on.</span>'}
       </label>
       <label class="field">
         <span class="field__label">Description (shown on the image's SEO page)</span>
@@ -1808,7 +2129,7 @@ function openGalleryForm(item) {
       </label>
       <div class="checkbox-row">
         <input type="checkbox" id="g-public" name="public" ${g.public ? 'checked' : ''}>
-        <label for="g-public">Public — show in the consumer design gallery</label>
+        <label for="g-public">Public — show in the consumer design gallery. Uncheck to keep ${isEdit ? 'it' : 'them'} hidden.</label>
       </div>
       <div class="form-actions">
         <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
@@ -1839,11 +2160,35 @@ function openGalleryForm(item) {
         await api('PUT', `/api/admin/gallery/${item.id}`, { ...meta, public: meta.public === 'true' });
         toast('Image updated');
       } else {
-        const file = $('#gallery-file').files[0];
-        if (!file) { toast('Choose an image file', true); submitBtn.disabled = false; return; }
-        const dims = await readImageDims(file);
-        await uploadImage(file, { ...meta, width: dims.width || '', height: dims.height || '' });
-        toast('Uploaded to the library');
+        const files = Array.from($('#gallery-file').files || []);
+        if (!files.length) { toast('Choose at least one file', true); submitBtn.disabled = false; return; }
+        // One request per file — the API takes a single file — but the metadata
+        // typed once applies to all of them, with the title numbered per file.
+        const errors = [];
+        let ok = 0;
+        for (const [i, file] of files.entries()) {
+          const head = files.length === 1 ? `Uploading ${file.name}` : `Uploading ${i + 1} of ${files.length} — ${file.name}`;
+          toast(`${head}…`);
+          try {
+            const dims = await readImageDims(file); // uploadImage size-checks
+            await uploadImage(file, {
+              ...meta,
+              title: files.length > 1 ? `${meta.title} ${i + 1}` : meta.title,
+              width: dims.width || '',
+              height: dims.height || '',
+            }, (frac) => toast(`${head}… ${Math.round(frac * 100)}%`));
+            ok += 1;
+          } catch (err) {
+            errors.push({ file, message: err.message });
+          }
+        }
+        if (!ok) {
+          reportUploadResult(0, errors);
+          submitBtn.disabled = false;
+          loadGallery();
+          return;
+        }
+        reportUploadResult(ok, errors);
       }
       closeEditor({ force: true });
       loadGallery();
@@ -2715,6 +3060,7 @@ if (state.token) {
     .then((data) => {
       state.email = (data && data.email) || '';
       if (data && data.maxUploadMB) state.maxUploadMB = data.maxUploadMB;
+      state.directUpload = !!(data && data.directUpload);
       showApp();
     })
     .catch(showLogin);
