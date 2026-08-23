@@ -849,6 +849,34 @@ body {
   color: var(--pr-b2);
   letter-spacing: 0.05em;
 }
+/* Slots whose shape the admin chooses (homepage testimonials) swap the fixed
+   shape caption for a picker. Compact, so it sits in the same line of the body
+   the caption occupied. */
+.slot__shape-pick select {
+  width: 100%;
+  margin: 2px 0 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(44, 26, 16, 0.2);
+  background: var(--w1);
+  font-family: var(--font-archivo);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--pr-b2);
+}
+.slot__shape-pick select:focus { outline: none; border-color: var(--sc-100); }
+.slot__shape-pick select:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .slot__actions-row { display: flex; gap: 8px; }
 .slot__actions-row .btn { flex: 1; }
 

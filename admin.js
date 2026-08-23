@@ -1010,7 +1010,34 @@ const SECTION_SHAPES = {
 };
 
 const DEFAULT_SHAPE = [1.6, 'Section band (16:10)'];
-const sectionShape = (page, slot) => SECTION_SHAPES[`${page}.${slot}`] || DEFAULT_SHAPE;
+
+// Slots whose shape is not fixed by the layout: the admin picks one and the
+// public page renders that box. The first entry is the site's default, used
+// whenever the slot has no stored `aspect`. Everything not listed here keeps
+// the single shape its layout dictates.
+const SECTION_ASPECTS = {
+  'homepage.testimonials': [
+    [0.8333, 'Portrait (5:6) — default'],
+    [0.75, 'Portrait (3:4)'],
+    [0.5625, 'Tall portrait (9:16)'],
+    [1, 'Square (1:1)'],
+    [1.3333, 'Landscape (4:3)'],
+    [1.7778, 'Wide (16:9)'],
+  ],
+};
+
+// The shape to draw the slot preview at and lock the crop tool to: the admin's
+// stored choice where the slot allows one, otherwise the layout's fixed shape.
+function sectionShape(page, slot, media) {
+  const key = `${page}.${slot}`;
+  const options = SECTION_ASPECTS[key];
+  if (options) {
+    const chosen = media && media.aspect ? media.aspect : options[0][0];
+    const match = options.find(([r]) => Math.abs(r - chosen) < 0.005);
+    return match || [chosen, `Custom (${chosen.toFixed(2)}:1)`];
+  }
+  return SECTION_SHAPES[key] || DEFAULT_SHAPE;
+}
 
 function renderSections() {
   const container = $('#sections-list');
@@ -1025,7 +1052,8 @@ function renderSections() {
         // A slot value is a media entry; records saved before the media model
         // are bare URL strings, which normalizeMedia() upgrades on read.
         const m = normalizeMedia(state.sections[pageKey][slotKey]);
-        const [ratio, shapeLabel] = sectionShape(pageKey, slotKey);
+        const [ratio, shapeLabel] = sectionShape(pageKey, slotKey, m);
+        const aspectOptions = SECTION_ASPECTS[`${pageKey}.${slotKey}`];
         const preview = m
           ? mediaThumbHTML(m, 'slot__media')
           : '<span class="slot__empty">Not set</span>';
@@ -1034,7 +1062,16 @@ function renderSections() {
             <div class="slot__preview" style="aspect-ratio:${ratio};">${preview}</div>
             <div class="slot__body">
               <p class="slot__name">${slotLabel}</p>
-              <p class="slot__shape">${shapeLabel}</p>
+              ${aspectOptions ? `
+                <label class="slot__shape-pick">
+                  <span class="sr-only">Shape for ${slotLabel}</span>
+                  <select data-aspect-select data-page="${pageKey}" data-slot="${slotKey}" ${m ? '' : 'disabled'}>
+                    ${aspectOptions.map(([r, label]) =>
+                      `<option value="${r}" ${Math.abs(r - ratio) < 0.005 ? 'selected' : ''}>${label}</option>`).join('')}
+                  </select>
+                </label>
+                ${m ? '' : '<p class="slot__meta">Upload a photo to choose its shape.</p>'}
+              ` : `<p class="slot__shape">${shapeLabel}</p>`}
               <p class="slot__meta">${m ? `${m.type === 'video' ? 'Video' : 'Photo'} · ${m.fit === 'contain' ? 'Whole image shown' : 'Fills the slot'}` : 'Empty'}</p>
             </div>
             <div class="slot__actions">
@@ -1068,6 +1105,18 @@ async function saveSection(page, slot, patch) {
   toast('Section updated');
   loadAll();
 }
+
+// Shape picker (only on slots listed in SECTION_ASPECTS). Saving the ratio
+// re-renders the slot, so the preview and the crop tool immediately reflect the
+// box the public page will now draw.
+$('#sections-list').addEventListener('change', async (e) => {
+  const select = e.target.closest('[data-aspect-select]');
+  if (!select) return;
+  const { page, slot } = select.dataset;
+  try {
+    await saveSection(page, slot, { aspect: Number(select.value) });
+  } catch (err) { toast(err.message, true); }
+});
 
 $('#sections-list').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-action]');
@@ -1109,7 +1158,7 @@ $('#sections-list').addEventListener('click', async (e) => {
           await saveSection(page, slot, updated);
         } catch (err) { toast(err.message, true); }
       }, (() => {
-        const [ratio, label] = sectionShape(page, slot);
+        const [ratio, label] = sectionShape(page, slot, current);
         return { aspect: String(ratio), aspectLabel: label, lockAspect: true };
       })());
       return;
@@ -1146,6 +1195,8 @@ function normalizeMedia(raw) {
     type: o.type === 'video' || (!o.type && VIDEO_URL_RE.test(url)) ? 'video' : 'image',
     fit: o.fit === 'contain' ? 'contain' : 'cover',
     position: o.position || '50% 50%',
+    // Only set on slots that offer a choice of shapes (see SECTION_ASPECTS).
+    aspect: Number(o.aspect) > 0 ? Number(o.aspect) : null,
   };
 }
 
