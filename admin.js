@@ -4,6 +4,10 @@ const TOKEN_KEY = 'rangmudra_admin_token';
 // Origin of the backend API (set in config.js). Empty = same origin as this page.
 const API_BASE = ((typeof window !== 'undefined' && window.RANGMUDRA_API_BASE) || '').replace(/\/$/, '');
 const apiUrl = (path) => API_BASE + path;
+// Store-wide fallback tax rate, mirrored from DEFAULT_TAX_PERCENT in
+// backend/server.js. Products with no rate of their own are charged this.
+const DEFAULT_TAX_PERCENT = 8;
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
@@ -194,6 +198,9 @@ function renderProducts() {
       ? Math.max(0, disc.type === 'flat' ? price - disc.value : Math.round(price * (1 - disc.value / 100)))
       : price;
     const discLabel = disc ? (disc.type === 'flat' ? `₹${disc.value} off` : `${disc.value}% off`) : '';
+    // Only worth showing when it differs from the store default.
+    const taxLabel = (p.taxPercent !== null && p.taxPercent !== undefined && Number(p.taxPercent) !== DEFAULT_TAX_PERCENT)
+      ? `${+Number(p.taxPercent).toFixed(2)}% tax` : '';
     const priceHtml = disc
       ? `<span class="card__price-was">₹${price.toLocaleString('en-IN')}</span> ₹${now.toLocaleString('en-IN')}`
       : `₹${price.toLocaleString('en-IN')}`;
@@ -202,10 +209,12 @@ function renderProducts() {
         ${img ? `<img class="card__media" src="${escapeAttr(img)}" alt="">` : '<span class="card__img-empty">No photo</span>'}
         ${p.featured ? '<span class="card__tag">Featured</span>' : ''}
         ${disc ? `<span class="card__tag card__tag--sale">${discLabel}</span>` : ''}
+        ${p.available === false ? '<span class="card__tag card__tag--soldout">Sold out</span>' : ''}
       </div>
       <div class="card__body">
         <h3 class="card__title">${escapeHtml(p.name)}</h3>
-        <p class="card__meta">${escapeHtml(p.category)} · ${escapeHtml(p.printType || '')}</p>
+        <p class="card__meta">${escapeHtml(p.category)} · ${escapeHtml(p.printType || '')}${taxLabel ? ` · ${taxLabel}` : ''}</p>
+        ${p.available === false ? `<p class="card__meta card__meta--soldout">Out of stock${p.soldOutAt ? ` · sold ${new Date(p.soldOutAt).toLocaleDateString('en-IN')}` : ''}${p.soldOutOrderId ? ` · ${escapeHtml(p.soldOutOrderId)}` : ''}</p>` : ''}
         <p class="card__price">${priceHtml}</p>
       </div>
       <div class="card__actions">
@@ -248,6 +257,35 @@ $('#product-print-filter').addEventListener('click', (e) => {
   renderProducts();
 });
 
+// Keep a create form's `slug` input in step with its title field until the admin
+// edits the slug themselves. Also normalizes whatever they type, so a slug typed
+// as "Flora Set" still submits as `flora-set` rather than tripping the pattern.
+function bindSlugField(form, sourceName) {
+  const source = form.elements[sourceName];
+  const slug = form.elements.slug;
+  if (!source || !slug) return;
+  // A prefilled slug (duplicating an existing record) is already the admin's.
+  let linked = !slug.value.trim();
+
+  source.addEventListener('input', () => {
+    if (linked) slug.value = slugify(source.value);
+  });
+  slug.addEventListener('input', () => {
+    linked = false;
+  });
+  // Normalize on the way out rather than per-keystroke, so a trailing hyphen
+  // mid-word doesn't get eaten while typing.
+  slug.addEventListener('blur', () => {
+    const clean = slugify(slug.value);
+    if (clean !== slug.value) slug.value = clean;
+    // Emptied by hand — hand it back to the name.
+    if (!clean) {
+      linked = true;
+      slug.value = slugify(source.value);
+    }
+  });
+}
+
 function openProductModal(product) {
   const isEdit = !!product;
   const p = product || {
@@ -259,6 +297,8 @@ function openProductModal(product) {
   const disc = (p.discount && Number(p.discount.value) > 0) ? p.discount : null;
   const discType = disc ? (disc.type === 'flat' ? 'flat' : 'percent') : 'none';
   const discValue = disc ? disc.value : '';
+  // Blank means "use the store default" — not 0%, which would be tax-free.
+  const taxPct = (p.taxPercent === null || p.taxPercent === undefined) ? '' : p.taxPercent;
   openEditor(isEdit ? `Edit — ${p.name}` : 'New product', `
     <form id="product-form" class="form-grid" autocomplete="off">
       <div id="product-media"></div>
@@ -268,8 +308,11 @@ function openProductModal(product) {
           <input name="name" required value="${escapeAttr(p.name)}">
         </label>
         <label class="field">
-          <span class="field__label">Slug</span>
+          <span class="field__label">Slug${isEdit ? '' : ' (the /shop/… web address)'}</span>
           <input name="slug" required ${isEdit ? 'readonly' : ''} value="${escapeAttr(p.slug)}" pattern="[a-z0-9-]+">
+          ${isEdit
+            ? '<span class="field__hint">The slug is the product\u2019s address and can\u2019t change once created.</span>'
+            : '<span class="field__hint">Filled in from the name — type here to set your own. Lowercase letters, numbers and hyphens.</span>'}
         </label>
       </div>
       <div class="field-row">
@@ -312,6 +355,14 @@ function openProductModal(product) {
         </label>
       </div>
       <p class="field__hint">A product's own discount takes priority over any store-wide sale — the sale won't apply on top of it.</p>
+      <div class="field-row">
+        <label class="field">
+          <span class="field__label">Tax rate (%)</span>
+          <input name="taxPercent" type="number" min="0" max="100" step="0.01" value="${taxPct}" placeholder="Store default (${DEFAULT_TAX_PERCENT}%)">
+          <span class="field__hint">Leave blank to charge the store default of ${DEFAULT_TAX_PERCENT}%. Enter 0 for a tax-free item.</span>
+        </label>
+        <div class="field"></div>
+      </div>
       <label class="field">
         <span class="field__label">Tags (comma-separated, e.g. INDIGO, TOPWEAR)</span>
         <input name="tags" value="${escapeAttr((p.tags || []).join(', '))}">
@@ -354,10 +405,15 @@ function openProductModal(product) {
     hint: 'The first item is the primary photo — it is what shows on the shop card and in the cart. Reorder with ↑ ↓. Use Crop / position to fit an oversized photo to the frame.',
   });
 
+  // On a new product the slug tracks the name, so it's there without being
+  // asked for — but it's a plain editable field: the moment the admin types in
+  // it, it's theirs and the name stops overwriting it.
+  if (!isEdit) bindSlugField($('#product-form'), 'name');
+
   $('#product-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const slug = (fd.get('slug') || '').toString().trim().toLowerCase();
+    const slug = slugify(fd.get('slug'));
     const payload = {
       name: fd.get('name').toString().trim(),
       slug,
@@ -378,6 +434,14 @@ function openProductModal(product) {
         const t = fd.get('discountType');
         const v = Number(fd.get('discountValue'));
         return (t === 'percent' || t === 'flat') && v > 0 ? { type: t, value: v } : null;
+      })(),
+      // Per-product tax rate as a percentage. null = fall back to the store
+      // default; 0 is a real, tax-free rate and is kept as such.
+      taxPercent: (() => {
+        const raw = (fd.get('taxPercent') || '').toString().trim();
+        if (raw === '') return null;
+        const v = Number(raw);
+        return Number.isFinite(v) && v >= 0 ? Math.min(100, v) : null;
       })(),
       // The full ordered gallery. The server derives `images` from it, so the
       // two fields can't drift apart.
@@ -1249,12 +1313,14 @@ async function loadCroppableImage(url) {
 // a corner to resize. The box is locked to the shape of the slot the media is
 // going into, so what you see is what that slot will show.
 //
-// Two ways to save:
+// Two ways to save, both reachable from the primary button:
 //   Save framing — non-destructive, stores a focal point the site applies in
 //                  CSS. Only exact while the box is at full size, because CSS
 //                  `object-fit: cover` always shows the largest region that
 //                  fits; a shrunken box means you zoomed, which CSS can't express.
 //   Crop a copy  — renders the box to a canvas and uploads it as a new file.
+// Shrinking the box therefore doesn't take the primary button away: it retargets
+// it at the crop route, which is the one that can honour the zoom.
 
 // The frame tool gets its own backdrop rather than reusing #modal-backdrop: it
 // is opened from inside the product/workshop form, and sharing the single modal
@@ -1347,6 +1413,7 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
   const g = { dispX: 0, dispY: 0, dispW: 0, dispH: 0, boxX: 0, boxY: 0, boxW: 0, boxH: 0, nw: 0, nh: 0 };
   let source = null;          // { img, objectUrl } once the croppable copy loads
   let croppable = false;
+  let zoomed = false;         // box shrunk below full size — set by paint()
 
   const ratio = () => Number(aspectSelect ? aspectSelect.value : aspect) || 0.8;
 
@@ -1370,14 +1437,24 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
       });
     }
     const max = maxBox();
-    // A shrunken box means zoom, which a CSS focal point cannot reproduce.
-    const zoomed = !contain && (g.boxW < max.w - 1 || g.boxH < max.h - 1);
-    $('#frame-save').disabled = zoomed;
+    // A shrunken box means zoom, which a CSS focal point cannot reproduce — so
+    // the primary button switches to the crop route rather than going away.
+    zoomed = !contain && (g.boxW < max.w - 1 || g.boxH < max.h - 1);
+    const saveBtn = $('#frame-save');
+    saveBtn.textContent = zoomed ? 'Crop & save' : 'Save framing';
+    // The one case with no route: zoomed in on a file whose pixels we can't read.
+    saveBtn.disabled = zoomed && !croppable;
+    saveBtn.title = saveBtn.disabled
+      ? 'This file’s host blocks reading the pixels, so a zoomed copy can’t be cut. '
+        + 'Reset the box to save framing instead.'
+      : '';
     cropBtn.disabled = contain || !croppable;
     $('#frame-hint').textContent = contain
       ? 'The whole photo will be shown, with empty space around it. Nothing to position.'
       : zoomed
-        ? 'Zoomed in — “Crop & save a copy” keeps this exactly. “Save framing” needs the box at full size.'
+        ? croppable
+          ? 'Zoomed in — saving cuts a copy at this exact box. Reset the box to store a focal point instead.'
+          : 'Zoomed in, but this file’s host blocks reading its pixels, so no copy can be cut. Reset the box to save framing.'
         : 'Drag the bright box to choose what stays in view. Drag a corner to zoom in.';
   };
 
@@ -1503,14 +1580,16 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
     return `${fx.toFixed(1)}% ${fy.toFixed(1)}%`;
   };
 
-  $('#frame-save').addEventListener('click', () => {
+  const saveFraming = () => {
     onSave({ ...m, fit: fitSelect.value, position: fitSelect.value === 'contain' ? '50% 50%' : focalString() });
     closeFrameLayer();
     toast('Framing saved');
-  });
+  };
 
-  cropBtn.addEventListener('click', async () => {
-    cropBtn.disabled = true;
+  // Render the current box to a new file. `btn` is put back on failure so the
+  // layer stays usable — on success the layer closes and takes it with it.
+  const saveCroppedCopy = async (btn) => {
+    btn.disabled = true;
     try {
       const scale = g.nw / g.dispW;        // display px → source px
       const file = await renderCrop(source.img, {
@@ -1521,10 +1600,19 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
       closeFrameLayer();
       toast('Cropped copy uploaded');
     } catch (err) {
-      cropBtn.disabled = false;
+      btn.disabled = false;
       toast(err.message, true);
     }
+  };
+
+  // One primary button, two routes: a full-size box stores a focal point, a
+  // shrunken one cuts the copy that keeps the zoom.
+  $('#frame-save').addEventListener('click', (e) => {
+    if (zoomed && croppable) saveCroppedCopy(e.currentTarget);
+    else saveFraming();
   });
+
+  cropBtn.addEventListener('click', (e) => saveCroppedCopy(e.currentTarget));
 }
 
 // Render a source rectangle to a JPEG File. Output is capped so a 6000px phone
@@ -3047,6 +3135,15 @@ function isVideoItem(g) {
 }
 function splitCSV(s) {
   return (s || '').toString().split(',').map((x) => x.trim()).filter(Boolean);
+}
+// Kebab-case a name into a URL-safe slug — matches the `[a-z0-9-]+` the slug
+// inputs are patterned on, and the shape the storefront's /shop/<slug> expects.
+function slugify(s) {
+  return String(s ?? '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // é → e
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 function emptyState(msg) {
   return `<p style="color:var(--sc-l3);grid-column:1/-1;text-align:center;padding:80px 24px;">${msg}</p>`;

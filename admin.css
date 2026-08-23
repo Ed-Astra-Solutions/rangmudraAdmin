@@ -263,6 +263,9 @@ body {
   text-transform: uppercase;
 }
 .card__tag--sale { left: auto; right: 12px; background: var(--pr-b2); }
+/* One unit of stock per piece — a paid order clears it and stamps the card. */
+.card__tag--soldout { top: auto; bottom: 12px; background: var(--sc-100); }
+.card__meta--soldout { color: var(--sc-l3); }
 .card__price-was { color: var(--sc-l4x); text-decoration: line-through; font-weight: 400; margin-right: 6px; }
 .card__body { padding: 20px; display: flex; flex-direction: column; gap: 8px; flex-grow: 1; }
 .card__title { font-family: var(--font-italiana); font-size: 20px; color: var(--sc-100); }
@@ -820,7 +823,8 @@ body {
 .frame-backdrop { z-index: 400; }
 
 /* Disabled buttons must read as disabled — the panel toggles `disabled` on the
-   reorder arrows, on "Save framing" while zoomed, and on forms mid-save. */
+   reorder arrows, on the crop buttons when the file's pixels can't be read, and
+   on forms mid-save. */
 .btn:disabled,
 .btn[disabled] {
   opacity: 0.4;
