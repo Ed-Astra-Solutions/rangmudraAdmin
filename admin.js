@@ -800,6 +800,7 @@ function openBlogModal(blog) {
         <div class="upload__btns">
           <button type="button" class="btn btn--ghost btn--sm" data-upload-trigger>Upload image</button>
           <button type="button" class="btn btn--ghost btn--sm" data-upload-pick>Choose from gallery</button>
+          <button type="button" class="btn btn--gold btn--sm" data-upload-edit ${b.image ? '' : 'disabled'}>Edit photo</button>
           ${b.image ? '<button type="button" class="btn btn--danger btn--sm" data-upload-clear>Clear</button>' : ''}
         </div>
         <input type="file" accept="image/*" class="upload__input">
@@ -939,6 +940,7 @@ async function confirmDeleteBlog(id) {
 const SECTION_LABELS = {
   homepage: {
     _title: 'Homepage',
+    _file: 'index.html',
     hero: 'Hero (full-bleed background)',
     introduction: 'Introduction still-life',
     'workshops-promo': 'Workshops promo banner',
@@ -960,10 +962,14 @@ const SECTION_LABELS = {
   },
   workshops: {
     _title: 'Workshops landing',
+    _file: 'workshops.html + workshop-category.html',
     hero: 'Hero band',
     'category-experience': 'Category card — Experience',
     'category-corporate': 'Category card — Corporate',
     'category-curated': 'Category card — Curated',
+    'category-hero-experience': 'Experience page — banner',
+    'category-hero-corporate': 'Corporate page — banner',
+    'category-hero-curated': 'Curated page — banner',
   },
   shop: {
     _title: 'Shop',
@@ -975,6 +981,14 @@ const SECTION_LABELS = {
     'carousel-1': 'Artistic Experience slide 1',
     'carousel-2': 'Artistic Experience slide 2',
     'carousel-3': 'Artistic Experience slide 3',
+  },
+  blogs: {
+    _title: 'Journal',
+    hero: 'Journal hero banner',
+  },
+  gallery: {
+    _title: 'Design gallery',
+    hero: 'Gallery hero banner',
   },
 };
 
@@ -1002,11 +1016,16 @@ const SECTION_SHAPES = {
   'workshops.category-experience': [0.8, 'Category card (4:5)'],
   'workshops.category-corporate': [0.8, 'Category card (4:5)'],
   'workshops.category-curated': [0.8, 'Category card (4:5)'],
+  'workshops.category-hero-experience': [4.5, 'Page banner (9:2)'],
+  'workshops.category-hero-corporate': [4.5, 'Page banner (9:2)'],
+  'workshops.category-hero-curated': [4.5, 'Page banner (9:2)'],
   'shop.hero': [2.4, 'Shop hero (12:5)'],
   'enquire.hero': [2.4, 'Enquire hero (12:5)'],
   'enquire.carousel-1': [1.7778, 'Carousel slide (16:9)'],
   'enquire.carousel-2': [1.7778, 'Carousel slide (16:9)'],
   'enquire.carousel-3': [1.7778, 'Carousel slide (16:9)'],
+  'blogs.hero': [3, 'Page banner (3:1)'],
+  'gallery.hero': [3, 'Page banner (3:1)'],
 };
 
 const DEFAULT_SHAPE = [1.6, 'Section band (16:10)'];
@@ -1043,23 +1062,32 @@ function renderSections() {
   const container = $('#sections-list');
   container.innerHTML = '';
   Object.entries(SECTION_LABELS).forEach(([pageKey, labels]) => {
-    if (!state.sections[pageKey]) return;
+    const pageSlots = state.sections[pageKey] || {};
     const group = document.createElement('div');
     group.className = 'section-group';
     const slotsHtml = Object.entries(labels)
-      .filter(([k]) => k !== '_title')
+      .filter(([k]) => !k.startsWith('_'))
       .map(([slotKey, slotLabel]) => {
         // A slot value is a media entry; records saved before the media model
         // are bare URL strings, which normalizeMedia() upgrades on read.
-        const m = normalizeMedia(state.sections[pageKey][slotKey]);
+        const m = normalizeMedia(pageSlots[slotKey]);
         const [ratio, shapeLabel] = sectionShape(pageKey, slotKey, m);
         const aspectOptions = SECTION_ASPECTS[`${pageKey}.${slotKey}`];
         const preview = m
           ? mediaThumbHTML(m, 'slot__media')
           : '<span class="slot__empty">Not set</span>';
+        // A slot as wide as a banner is unreadable squeezed into one grid
+        // column, and the point of the preview is to show the real proportion.
+        const wide = ratio >= 2 ? ' slot--wide' : '';
+        // The preview is the natural thing to click to change the framing.
+        const previewTag = m && m.type === 'image'
+          ? `<button type="button" class="slot__preview slot__preview--live" style="aspect-ratio:${ratio};"
+               data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}"
+               title="Adjust how this photo sits in the slot">${preview}<span class="slot__preview-hint">Adjust framing</span></button>`
+          : `<div class="slot__preview" style="aspect-ratio:${ratio};">${preview}</div>`;
         return `
-          <div class="slot">
-            <div class="slot__preview" style="aspect-ratio:${ratio};">${preview}</div>
+          <div class="slot${wide}">
+            ${previewTag}
             <div class="slot__body">
               <p class="slot__name">${slotLabel}</p>
               ${aspectOptions ? `
@@ -1076,7 +1104,7 @@ function renderSections() {
             </div>
             <div class="slot__actions">
               ${m && m.type === 'image'
-                ? `<button class="btn btn--gold btn--sm btn--block" data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}">Adjust framing</button>`
+                ? `<button class="btn btn--gold btn--sm btn--block" data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}">Edit photo</button>`
                 : ''}
               ${m && m.type === 'video'
                 ? `<button class="btn btn--gold btn--sm btn--block" data-action="fit-section" data-page="${pageKey}" data-slot="${slotKey}">${m.fit === 'contain' ? 'Fill the slot' : 'Show whole video'}</button>`
@@ -1091,7 +1119,7 @@ function renderSections() {
       }).join('');
     group.innerHTML = `
       <h3 class="section-group__title">${labels._title}</h3>
-      <p class="section-group__subtitle">${pageKey}.html</p>
+      <p class="section-group__subtitle">${labels._file || `${pageKey}.html`}</p>
       <div class="section-slots">${slotsHtml}</div>
     `;
     container.appendChild(group);
@@ -1220,10 +1248,26 @@ function mediaFitStyle(m) {
   return `object-fit:${m.fit};object-position:${m.position};`;
 }
 
+// Replacing an image in place keeps its URL, so the browser happily shows the
+// bytes it already cached. This records what was replaced during this admin
+// session and cache-busts only the previews rendered here — the stored URL must
+// stay untouched, or in-place replacement would stop being in-place.
+const replacedVersions = new Map();   // url -> version stamp
+
+function notePlaceReplacement(url, version) {
+  replacedVersions.set(url, version || Date.now());
+}
+
+function previewSrc(url) {
+  const v = replacedVersions.get(url);
+  if (!v) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}v=${v}`;
+}
+
 function mediaThumbHTML(m, cls) {
   return m.type === 'video'
     ? `<video class="${cls}" src="${escapeAttr(m.url)}#t=0.1" style="${mediaFitStyle(m)}" muted playsinline preload="metadata"></video>`
-    : `<img class="${cls}" src="${escapeAttr(m.url)}" alt="" style="${mediaFitStyle(m)}">`;
+    : `<img class="${cls}" src="${escapeAttr(previewSrc(m.url))}" alt="" style="${mediaFitStyle(m)}">`;
 }
 
 // ---------- Media list editor ----------
@@ -1272,7 +1316,7 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
         <div class="media-item__actions">
           <button type="button" class="btn btn--ghost btn--sm" data-media-up ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
           <button type="button" class="btn btn--ghost btn--sm" data-media-down ${i === items.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
-          ${m.type === 'image' ? '<button type="button" class="btn btn--gold btn--sm" data-media-frame>Crop / position</button>' : ''}
+          ${m.type === 'image' ? '<button type="button" class="btn btn--gold btn--sm" data-media-frame>Edit photo</button>' : ''}
           <button type="button" class="btn btn--danger btn--sm" data-media-remove>Remove</button>
         </div>
       </div>
@@ -1324,13 +1368,14 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
 }
 
 // Aspect presets, used when the caller doesn't already know the slot's shape.
-// Values are width ÷ height.
+// Values are width ÷ height. 'free' unlocks the box entirely.
 const FRAME_ASPECTS = [
   ['0.8', 'Product / workshop card (4:5)'],
   ['1', 'Square (1:1)'],
   ['1.6', 'Section band (16:10)'],
   ['1.7778', 'Wide banner (16:9)'],
   ['3.2', 'Hero strip (16:5)'],
+  ['free', 'Free — any shape'],
 ];
 
 // Fetch the bytes and hand back a same-origin blob URL.
@@ -1401,12 +1446,74 @@ $('#frame-backdrop')?.addEventListener('click', (e) => {
   if (e.target.closest('[data-frame-close]')) closeFrameLayer();
 });
 
+// The photo editor. Opened on any stored image, from any field that holds one.
+//
+// Two kinds of edit, and the difference matters:
+//
+//   Framing      — non-destructive. Stores `fit` + a focal point the public CSS
+//                  applies. The file is untouched, so it can be re-framed for a
+//                  different slot forever. Only expressible while the box is at
+//                  full size and no pixels are being altered.
+//   A real edit  — rotate, straighten, flip, brightness/contrast/saturation, or
+//                  a zoomed/free crop. CSS cannot express any of these, so the
+//                  pixels are re-rendered and stored, either as a new copy or
+//                  over the original.
+//
+// Everything is previewed by baking the edit into a canvas at preview scale and
+// showing that canvas, rather than by CSS-transforming an <img>. It costs a
+// redraw per control change and buys the thing that actually matters: the crop
+// box is measured against the same pixels the save path renders, so what the
+// box surrounds is exactly what comes out.
+//
+// Reading the pixels needs the file to be canvas-readable (see
+// loadCroppableImage). When a host blocks that, every pixel-altering control is
+// disabled and framing — which needs no pixel access — is still offered.
+
+// Longest edge of the preview bake. Small enough to redraw on a slider drag.
+const FRAME_PREVIEW_MAX = 1400;
+// Longest edge of the stage a save renders from, before the crop is taken.
+const FRAME_OUTPUT_MAX = 3000;
+// How far the frame can close in. Past this the crop is mostly interpolation.
+const FRAME_ZOOM_MAX = 4;
+// Straighten range, in degrees each way. Kept under 45° so the inscribed-crop
+// maths below stays well-conditioned.
+const STRAIGHTEN_MAX = 15;
+
+// Does this browser's canvas honour ctx.filter? Safari <16 and older Firefox
+// don't, and silently dropping the adjustments would save a photo that looks
+// nothing like the preview.
+let canvasFilterSupport = null;
+function supportsCanvasFilter() {
+  if (canvasFilterSupport !== null) return canvasFilterSupport;
+  try {
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.filter = 'brightness(0.5)';
+    canvasFilterSupport = ctx.filter !== 'none' && ctx.filter !== '';
+  } catch {
+    canvasFilterSupport = false;
+  }
+  return canvasFilterSupport;
+}
+
 function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockAspect = false } = {}) {
   const m = normalizeMedia(media);
+  const filtersUsable = supportsCanvasFilter();
+  // Both save routes re-encode in the original's format (see renderCrop).
+  const outMime = outputMimeFor(m.url);
+  // The shape the preview is drawn at. A slot-locked crop keeps the slot's
+  // shape whatever the box does — a free crop still ends up inside that slot,
+  // so previewing the crop's own shape would show something the page never
+  // renders. Everywhere else there is no fixed destination, so the preview
+  // follows whatever shape is being cut.
+  const slotRatio = Number(aspect) > 0 ? Number(aspect) : 1.6;
+  const previewLabel = aspectLabel;
+
   openFrameLayer(`
     <div class="frame-tool">
-      <div class="frame-ws" id="frame-ws">
-        <img class="frame-ws__img" id="frame-img" alt="" draggable="false">
+      <div class="frame-stage">
+      <div class="frame-ws" id="frame-ws" tabindex="0" aria-label="Framing workspace: drag to move the frame, arrow keys to nudge">
+        <canvas class="frame-ws__img" id="frame-canvas" hidden></canvas>
+        <img class="frame-ws__img" id="frame-img" alt="" draggable="false" hidden>
         <div class="frame-crop" id="frame-crop" hidden>
           <span class="frame-crop__handle" data-handle="nw"></span>
           <span class="frame-crop__handle" data-handle="ne"></span>
@@ -1414,6 +1521,57 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
           <span class="frame-crop__handle" data-handle="sw"></span>
         </div>
         <p class="frame-ws__loading" id="frame-loading">Loading…</p>
+      </div>
+
+      <!-- What the slot will actually show. Drawn from the same pixels the save
+           path renders, at the slot's own shape, so it is a preview and not an
+           approximation. -->
+      <figure class="frame-preview" id="frame-preview">
+        <figcaption class="frame-preview__label">On the page${previewLabel ? ` — ${escapeHtml(previewLabel)}` : ''}</figcaption>
+        <div class="frame-preview__box" id="frame-preview-box" style="--r:${slotRatio}">
+          <canvas id="frame-preview-canvas"></canvas>
+        </div>
+      </figure>
+      </div>
+
+      <div class="frame-tools frame-tools--zoom" id="frame-zoom-row">
+        <label class="frame-slider">
+          <span class="frame-slider__label">Zoom <output id="out-zoom">100%</output></span>
+          <input type="range" id="in-zoom" min="100" max="${FRAME_ZOOM_MAX * 100}" step="1" value="100">
+        </label>
+        <button type="button" class="btn btn--ghost btn--sm" id="frame-zoom-reset">Fit the whole width</button>
+      </div>
+
+      <div class="frame-tools" id="frame-tools">
+        <div class="frame-tools__group">
+          <span class="frame-tools__label">Rotate</span>
+          <button type="button" class="btn btn--ghost btn--sm" data-rot="-1" aria-label="Rotate left">↺ 90°</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-rot="1" aria-label="Rotate right">↻ 90°</button>
+        </div>
+        <div class="frame-tools__group">
+          <span class="frame-tools__label">Flip</span>
+          <button type="button" class="btn btn--ghost btn--sm" data-flip="h" aria-pressed="false">Horizontal</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-flip="v" aria-pressed="false">Vertical</button>
+        </div>
+        <label class="frame-slider">
+          <span class="frame-slider__label">Straighten <output id="out-straighten">0°</output></span>
+          <input type="range" id="in-straighten" min="${-STRAIGHTEN_MAX}" max="${STRAIGHTEN_MAX}" step="0.5" value="0">
+        </label>
+      </div>
+
+      <div class="frame-tools frame-tools--adjust" id="frame-adjust">
+        <label class="frame-slider">
+          <span class="frame-slider__label">Brightness <output id="out-brightness">100%</output></span>
+          <input type="range" id="in-brightness" min="50" max="150" step="1" value="100">
+        </label>
+        <label class="frame-slider">
+          <span class="frame-slider__label">Contrast <output id="out-contrast">100%</output></span>
+          <input type="range" id="in-contrast" min="50" max="150" step="1" value="100">
+        </label>
+        <label class="frame-slider">
+          <span class="frame-slider__label">Saturation <output id="out-saturate">100%</output></span>
+          <input type="range" id="in-saturate" min="0" max="200" step="1" value="100">
+        </label>
       </div>
 
       <div class="frame-controls">
@@ -1426,12 +1584,12 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
         </label>
         ${lockAspect ? `
           <div class="field">
-            <span class="field__label">Slot shape</span>
-            <p class="frame-shape-fixed">${escapeHtml(aspectLabel || 'Fixed by this slot')}</p>
+            <span class="field__label">Crop shape</span>
+            <p class="frame-shape-fixed">${escapeHtml(aspectLabel || 'Fixed by this slot')} — <button type="button" class="frame-link" id="frame-unlock">crop freely instead</button></p>
           </div>
         ` : `
           <label class="field">
-            <span class="field__label">Slot shape</span>
+            <span class="field__label">Crop shape</span>
             <select id="frame-aspect">
               ${FRAME_ASPECTS.map(([v, l]) => `<option value="${v}" ${v === aspect ? 'selected' : ''}>${l}</option>`).join('')}
             </select>
@@ -1442,38 +1600,208 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
       <p class="field__hint" id="frame-hint">Drag the bright box to choose what stays in view. Drag a corner to zoom in.</p>
 
       <div class="form-actions">
-        <button type="button" class="btn btn--ghost btn--sm" id="frame-reset">Reset box</button>
+        <button type="button" class="btn btn--ghost btn--sm" id="frame-reset">Reset everything</button>
         <span class="form-actions__spacer"></span>
         <button type="button" class="btn btn--ghost" data-frame-close>Cancel</button>
-        <button type="button" class="btn btn--ghost" id="frame-crop-btn">Crop &amp; save a copy</button>
+        <button type="button" class="btn btn--ghost" id="frame-replace">Replace original</button>
         <button type="button" class="btn btn--primary" id="frame-save">Save framing</button>
       </div>
     </div>
   `);
 
   const ws = $('#frame-ws');
+  const canvas = $('#frame-canvas');
   const img = $('#frame-img');
   const cropBox = $('#frame-crop');
   const fitSelect = $('#frame-fit');
   const aspectSelect = $('#frame-aspect');
-  const cropBtn = $('#frame-crop-btn');
+  const zoomRow = $('#frame-zoom-row');
+  const zoomInput = $('#in-zoom');
+  const pvBox = $('#frame-preview-box');
+  const pvCanvas = $('#frame-preview-canvas');
+  const replaceBtn = $('#frame-replace');
+  const saveBtn = $('#frame-save');
 
-  // Geometry, all in workspace pixels.
-  //   disp{X,Y,W,H} — where the whole image is drawn (contain-fitted)
-  //   box{X,Y,W,H}  — the kept region, always inside the image
-  const g = { dispX: 0, dispY: 0, dispW: 0, dispH: 0, boxX: 0, boxY: 0, boxW: 0, boxH: 0, nw: 0, nh: 0 };
-  let source = null;          // { img, objectUrl } once the croppable copy loads
+  // Pixel-altering edits. All of them are baked at save time.
+  const ed = { quarters: 0, straighten: 0, flipH: false, flipV: false, brightness: 1, contrast: 1, saturate: 1 };
+  // Geometry, all in workspace pixels. box{} is the kept region; disp{} is
+  // where the whole (already-edited) stage is drawn.
+  const g = { dispX: 0, dispY: 0, dispW: 0, dispH: 0, boxX: 0, boxY: 0, boxW: 0, boxH: 0,
+    nw: 0, nh: 0, srcW: 1, srcH: 1 };
+  let source = null;          // { img, objectUrl } once the readable copy loads
   let croppable = false;
+  let freeCrop = false;       // set by the shape select / unlock link
   let zoomed = false;         // box shrunk below full size — set by paint()
 
-  const ratio = () => Number(aspectSelect ? aspectSelect.value : aspect) || 0.8;
+  const edited = () => ed.quarters !== 0 || ed.straighten !== 0 || ed.flipH || ed.flipV
+    || ed.brightness !== 1 || ed.contrast !== 1 || ed.saturate !== 1;
+
+  const ratio = () => {
+    if (freeCrop) return null;
+    const raw = aspectSelect ? aspectSelect.value : aspect;
+    if (raw === 'free') return null;
+    return Number(raw) || 0.8;
+  };
+
+  const filterString = () =>
+    `brightness(${ed.brightness}) contrast(${ed.contrast}) saturate(${ed.saturate})`;
+
+  // ---- the stage: the source with every pixel edit applied ----
+
+  // Size of the edited image, in source pixels. A quarter turn swaps the axes;
+  // straightening crops back to the largest rectangle of that same shape which
+  // still lies wholly inside the rotated image, so the corners never show
+  // empty wedges (the auto-crop every photo app does after a straighten).
+  const stageDims = () => {
+    const swap = ed.quarters % 2 !== 0;
+    const w = swap ? g.srcH : g.srcW;
+    const h = swap ? g.srcW : g.srcH;
+    if (!ed.straighten) return { w, h };
+    const a = Math.abs(ed.straighten) * Math.PI / 180;
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+    const denom = cos * cos - sin * sin;          // cos(2a); > 0 below 45°
+    const iw = (w * cos - h * sin) / denom;
+    const ih = (h * cos - w * sin) / denom;
+    // A very wide or tall image can have no inscribed rectangle of its own
+    // shape at this angle; fall back to the full rotated bounds in that case.
+    if (!(iw > 8 && ih > 8)) return { w: w * cos + h * sin, h: w * sin + h * cos };
+    return { w: iw, h: ih };
+  };
+
+  // Draw the stage into `target` at `maxEdge`. Returns the canvas' pixel size.
+  const bake = (target, maxEdge) => {
+    const dims = stageDims();
+    const scale = Math.min(1, maxEdge / Math.max(dims.w, dims.h));
+    const cw = Math.max(1, Math.round(dims.w * scale));
+    const ch = Math.max(1, Math.round(dims.h * scale));
+    target.width = cw;
+    target.height = ch;
+    const ctx = target.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.filter = 'none';
+    ctx.clearRect(0, 0, cw, ch);
+    // A rotation or a straighten can leave the corners uncovered. PNG/WebP keep
+    // them transparent; a JPEG has no alpha, so they get the same white the
+    // public site letterboxes uncropped photography against.
+    if (!keepsAlpha(outMime)) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cw, ch);
+    }
+    if (filtersUsable) ctx.filter = filterString();
+    const angle = (ed.quarters * 90 + ed.straighten) * Math.PI / 180;
+    ctx.translate(cw / 2, ch / 2);
+    ctx.rotate(angle);
+    ctx.scale(ed.flipH ? -1 : 1, ed.flipV ? -1 : 1);
+    // Source drawn centred, scaled to the stage: the flip applies in source
+    // space and the rotation after it, which is the order that reads naturally.
+    const dw = g.srcW * scale;
+    const dh = g.srcH * scale;
+    ctx.drawImage(source.img, -dw / 2, -dh / 2, dw, dh);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.filter = 'none';
+    return { w: cw, h: ch };
+  };
+
+  // ---- workspace layout + painting ----
+
+  const layout = () => {
+    const dims = croppable ? stageDims() : { w: g.srcW, h: g.srcH };
+    g.nw = dims.w;
+    g.nh = dims.h;
+    const scale = Math.min(ws.clientWidth / g.nw, ws.clientHeight / g.nh);
+    g.dispW = g.nw * scale;
+    g.dispH = g.nh * scale;
+    g.dispX = (ws.clientWidth - g.dispW) / 2;
+    g.dispY = (ws.clientHeight - g.dispH) / 2;
+    const el = croppable ? canvas : img;
+    Object.assign(el.style, {
+      left: `${g.dispX}px`, top: `${g.dispY}px`,
+      width: `${g.dispW}px`, height: `${g.dispH}px`,
+    });
+  };
 
   // Largest box of the current aspect that fits inside the displayed image.
   const maxBox = () => {
     const a = ratio();
+    if (!a) return { w: g.dispW, h: g.dispH };
     return g.dispW / g.dispH > a
       ? { w: a * g.dispH, h: g.dispH }
       : { w: g.dispW, h: g.dispW / a };
+  };
+
+  // How far in the frame is, as a multiple of the largest box that fits.
+  // 1 = the whole width of the photo is in view.
+  const zoomLevel = () => {
+    const max = maxBox();
+    return max.w > 0 && g.boxW > 0 ? max.w / g.boxW : 1;
+  };
+
+  // Close in or pull back around the frame's own centre, the way a crop app's
+  // zoom does — the framed subject stays put instead of drifting to a corner.
+  const applyZoom = (z) => {
+    const max = maxBox();
+    const level = Math.max(1, Math.min(FRAME_ZOOM_MAX, z));
+    const cx = g.boxX + g.boxW / 2;
+    const cy = g.boxY + g.boxH / 2;
+    const a = ratio();
+    g.boxW = max.w / level;
+    g.boxH = a ? g.boxW / a : max.h / level;
+    g.boxX = cx - g.boxW / 2;
+    g.boxY = cy - g.boxH / 2;
+    clampBox();
+    paint();
+  };
+
+  // The slot, drawn from the same pixels a save renders. `cover` semantics
+  // match the public CSS: the framed region fills the slot and any difference
+  // in shape is cropped off centre, never squashed.
+  // What the preview box is shaped like right now (see slotRatio).
+  const previewRatio = () => {
+    if (lockAspect) return slotRatio;
+    const a = ratio();
+    if (a) return a;
+    return g.boxH > 0 ? g.boxW / g.boxH : slotRatio;
+  };
+
+  const drawPreview = () => {
+    const src = croppable ? canvas : img;
+    const sw0 = croppable ? canvas.width : (img.naturalWidth || 0);
+    const sh0 = croppable ? canvas.height : (img.naturalHeight || 0);
+    if (!sw0 || !sh0 || !g.dispW || !g.dispH) return;
+    const pr = previewRatio();
+    pvBox.style.setProperty('--r', String(pr));
+    const cw = 640;
+    const ch = Math.max(1, Math.round(cw / pr));
+    if (pvCanvas.width !== cw || pvCanvas.height !== ch) {
+      pvCanvas.width = cw;
+      pvCanvas.height = ch;
+    }
+    const ctx = pvCanvas.getContext('2d');
+    ctx.clearRect(0, 0, cw, ch);
+    if (fitSelect.value === 'contain') {
+      // Letterboxed: the box's own background stands in for the page's, which
+      // is what shows around a contained photo.
+      const s = Math.min(cw / sw0, ch / sh0);
+      ctx.drawImage(src, (cw - sw0 * s) / 2, (ch - sh0 * s) / 2, sw0 * s, sh0 * s);
+      return;
+    }
+    let sx = (g.boxX / g.dispW) * sw0;
+    let sy = (g.boxY / g.dispH) * sh0;
+    let sw = (g.boxW / g.dispW) * sw0;
+    let sh = (g.boxH / g.dispH) * sh0;
+    // Cover the slot with the framed region (a no-op while the frame is locked
+    // to the slot's shape, which is the usual case).
+    if (sw / sh > pr) {
+      const w = sh * pr;
+      sx += (sw - w) / 2;
+      sw = w;
+    } else {
+      const h = sw / pr;
+      sy += (sh - h) / 2;
+      sh = h;
+    }
+    ctx.drawImage(src, sx, sy, sw, sh, 0, 0, cw, ch);
   };
 
   const paint = () => {
@@ -1488,33 +1816,60 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
       });
     }
     const max = maxBox();
-    // A shrunken box means zoom, which a CSS focal point cannot reproduce — so
-    // the primary button switches to the crop route rather than going away.
     zoomed = !contain && (g.boxW < max.w - 1 || g.boxH < max.h - 1);
-    const saveBtn = $('#frame-save');
-    saveBtn.textContent = zoomed ? 'Crop & save' : 'Save framing';
-    // The one case with no route: zoomed in on a file whose pixels we can't read.
-    saveBtn.disabled = zoomed && !croppable;
+    // Framing is only available while nothing about the pixels has changed and
+    // the box still surrounds everything CSS would show.
+    const destructive = edited() || zoomed;
+    saveBtn.textContent = destructive ? 'Save a copy' : 'Save framing';
+    saveBtn.disabled = destructive && !croppable;
     saveBtn.title = saveBtn.disabled
-      ? 'This file’s host blocks reading the pixels, so a zoomed copy can’t be cut. '
-        + 'Reset the box to save framing instead.'
+      ? 'This file’s host blocks reading the pixels, so an edited copy can’t be rendered. '
+        + 'Undo the edits to save framing instead.'
       : '';
-    cropBtn.disabled = contain || !croppable;
+    replaceBtn.disabled = !croppable || !destructive;
+    replaceBtn.title = !croppable
+      ? 'This file’s host blocks reading the pixels, so it can’t be re-rendered.'
+      : !destructive
+        ? 'Nothing to bake in yet — rotate, crop, flip or adjust first.'
+        : 'Overwrites the stored file. Every product, workshop, section and blog '
+          + 'using this image shows the edit.';
     $('#frame-hint').textContent = contain
       ? 'The whole photo will be shown, with empty space around it. Nothing to position.'
-      : zoomed
+      : destructive
         ? croppable
-          ? 'Zoomed in — saving cuts a copy at this exact box. Reset the box to store a focal point instead.'
-          : 'Zoomed in, but this file’s host blocks reading its pixels, so no copy can be cut. Reset the box to save framing.'
-        : 'Drag the bright box to choose what stays in view. Drag a corner to zoom in.';
+          ? 'Saving re-renders the pixels: a copy leaves the original alone, replacing overwrites it everywhere.'
+          : 'This file’s host blocks reading its pixels, so nothing can be re-rendered. Undo the edits to save framing.'
+        : 'Drag anywhere to move the frame. Scroll or use Zoom to close in, arrow keys to nudge.';
+    // Zoom is a framing control: there is nothing to close in on when the whole
+    // photo is being shown, and nothing savable when the pixels can't be read.
+    zoomRow.hidden = contain || !croppable;
+    const level = zoomLevel();
+    if (Math.abs(Number(zoomInput.value) - level * 100) > 0.5) {
+      zoomInput.value = String(Math.round(level * 100));
+    }
+    $('#out-zoom').textContent = `${Math.round(level * 100)}%`;
+    drawPreview();
+  };
+
+  // Re-bake the preview and repaint. Called on every pixel-edit change.
+  const refresh = ({ keepBox = false } = {}) => {
+    if (croppable) bake(canvas, FRAME_PREVIEW_MAX);
+    const focal = keepBox ? focalString() : null;
+    layout();
+    if (keepBox) resetBox(focal); else resetBox();
   };
 
   // Keep the box inside the image and on-aspect.
   const clampBox = () => {
+    const a = ratio();
     const max = maxBox();
     g.boxW = Math.min(g.boxW, max.w);
-    g.boxH = g.boxW / ratio();
-    if (g.boxH > g.dispH) { g.boxH = g.dispH; g.boxW = g.boxH * ratio(); }
+    if (a) {
+      g.boxH = g.boxW / a;
+      if (g.boxH > g.dispH) { g.boxH = g.dispH; g.boxW = g.boxH * a; }
+    } else {
+      g.boxH = Math.min(g.boxH, g.dispH);
+    }
     g.boxX = Math.max(0, Math.min(g.dispW - g.boxW, g.boxX));
     g.boxY = Math.max(0, Math.min(g.dispH - g.boxH, g.boxY));
   };
@@ -1533,45 +1888,37 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
     paint();
   };
 
-  // Contain-fit the image into the workspace.
-  const layoutImage = () => {
-    const wsW = ws.clientWidth;
-    const wsH = ws.clientHeight;
-    const scale = Math.min(wsW / g.nw, wsH / g.nh);
-    g.dispW = g.nw * scale;
-    g.dispH = g.nh * scale;
-    g.dispX = (wsW - g.dispW) / 2;
-    g.dispY = (wsH - g.dispH) / 2;
-    Object.assign(img.style, {
-      left: `${g.dispX}px`, top: `${g.dispY}px`,
-      width: `${g.dispW}px`, height: `${g.dispH}px`,
-    });
-  };
-
-  // Load a croppable copy; fall back to a plain preview if the host blocks it.
+  // Load a readable copy; fall back to a plain preview if the host blocks it.
   (async () => {
     try {
       source = await loadCroppableImage(m.url);
       croppable = true;
-      img.src = source.objectUrl;
+      canvas.hidden = false;
       frameObjectUrl = source.objectUrl;   // released by closeFrameLayer()
-    } catch (_) {
-      croppable = false;
-      img.src = m.url;                       // preview still works
-    }
-    const start = () => {
-      g.nw = img.naturalWidth || 1;
-      g.nh = img.naturalHeight || 1;
+      g.srcW = source.img.naturalWidth || 1;
+      g.srcH = source.img.naturalHeight || 1;
       $('#frame-loading').hidden = true;
-      layoutImage();
-      resetBox();
-      if (!croppable) {
-        cropBtn.title = 'This file’s host blocks reading the pixels, so a copy can’t be cut. '
-          + 'Save framing instead — it needs no access to the file.';
+      if (!filtersUsable) {
+        $('#frame-adjust').hidden = true;
       }
-    };
-    if (img.complete && img.naturalWidth) start();
-    else img.addEventListener('load', start, { once: true });
+      refresh();
+    } catch (_) {
+      // No pixel access: preview only, and every pixel-altering control goes.
+      croppable = false;
+      img.hidden = false;
+      img.src = m.url;
+      $('#frame-tools').hidden = true;
+      $('#frame-adjust').hidden = true;
+      const start = () => {
+        g.srcW = img.naturalWidth || 1;
+        g.srcH = img.naturalHeight || 1;
+        $('#frame-loading').hidden = true;
+        layout();
+        resetBox();
+      };
+      if (img.complete && img.naturalWidth) start();
+      else img.addEventListener('load', start, { once: true });
+    }
   })();
 
   // ---- pointer interaction: drag to move, corner to resize ----
@@ -1579,14 +1926,17 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
   ws.addEventListener('pointerdown', (e) => {
     if (cropBox.hidden) return;
     const handle = e.target.closest('[data-handle]');
-    const inBox = e.target === cropBox || handle;
-    if (!inBox) return;
+    // Anywhere in the workspace moves the frame. Having to land on the box
+    // exactly is the thing that makes a crop tool feel stiff; the corners keep
+    // their own job because they resize rather than move.
+    ws.focus({ preventScroll: true });
     drag = {
       handle: handle ? handle.dataset.handle : null,
       x: e.clientX, y: e.clientY,
       boxX: g.boxX, boxY: g.boxY, boxW: g.boxW, boxH: g.boxH,
     };
     ws.setPointerCapture(e.pointerId);
+    ws.classList.add('is-dragging');
     e.preventDefault();
   });
 
@@ -1603,9 +1953,12 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
       const north = drag.handle.includes('n');
       const rightEdge = drag.boxX + drag.boxW;
       const bottomEdge = drag.boxY + drag.boxH;
+      const a = ratio();
       let w = west ? drag.boxW - dx : drag.boxW + dx;
       w = Math.max(40, w);
-      let h = w / ratio();
+      // Locked to a shape, height follows width; cropping freely, each edge
+      // follows its own corner.
+      let h = a ? w / a : Math.max(40, north ? drag.boxH - dy : drag.boxH + dy);
       if (west) g.boxX = rightEdge - w; else g.boxX = drag.boxX;
       if (north) g.boxY = bottomEdge - h; else g.boxY = drag.boxY;
       g.boxW = w;
@@ -1618,11 +1971,102 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
     clampBox();
     paint();
   });
-  ['pointerup', 'pointercancel'].forEach((ev) => ws.addEventListener(ev, () => { drag = null; }));
+  ['pointerup', 'pointercancel'].forEach((ev) => ws.addEventListener(ev, () => {
+    drag = null;
+    ws.classList.remove('is-dragging');
+  }));
+
+  // Wheel / trackpad pinch closes in on the pointer's own position, so the
+  // detail under the cursor is what you end up framed on.
+  ws.addEventListener('wheel', (e) => {
+    if (cropBox.hidden || !croppable) return;
+    e.preventDefault();
+    const step = e.deltaY < 0 ? 1.08 : 1 / 1.08;
+    applyZoom(zoomLevel() * step);
+  }, { passive: false });
+
+  // Nudge the frame a pixel at a time — the last few pixels of a crop are hard
+  // to hit with a pointer. Shift moves in bigger steps.
+  ws.addEventListener('keydown', (e) => {
+    if (cropBox.hidden) return;
+    const step = e.shiftKey ? 10 : 1;
+    const moves = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    const move = moves[e.key];
+    if (!move) return;
+    e.preventDefault();
+    g.boxX += move[0];
+    g.boxY += move[1];
+    clampBox();
+    paint();
+  });
+
+  // ---- controls ----
 
   fitSelect.addEventListener('change', paint);
-  aspectSelect?.addEventListener('change', () => resetBox(focalString()));
-  $('#frame-reset').addEventListener('click', () => resetBox('50% 50%'));
+  zoomInput.addEventListener('input', () => applyZoom(Number(zoomInput.value) / 100));
+  $('#frame-zoom-reset').addEventListener('click', () => applyZoom(1));
+  aspectSelect?.addEventListener('change', () => {
+    freeCrop = aspectSelect.value === 'free';
+    resetBox(focalString());
+  });
+  // A slot-locked crop can still be cut freely — the result is a new file, so
+  // it is no longer bound to the slot's shape.
+  $('#frame-unlock')?.addEventListener('click', (e) => {
+    freeCrop = !freeCrop;
+    e.currentTarget.textContent = freeCrop ? 'go back to the slot’s shape' : 'crop freely instead';
+    resetBox(focalString());
+  });
+
+  $('#frame-tools').addEventListener('click', (e) => {
+    const rot = e.target.closest('[data-rot]');
+    const flip = e.target.closest('[data-flip]');
+    if (rot) {
+      ed.quarters = (ed.quarters + Number(rot.dataset.rot) + 4) % 4;
+      refresh();
+    } else if (flip) {
+      const axis = flip.dataset.flip === 'h' ? 'flipH' : 'flipV';
+      ed[axis] = !ed[axis];
+      flip.setAttribute('aria-pressed', String(ed[axis]));
+      flip.classList.toggle('btn--gold', ed[axis]);
+      refresh({ keepBox: true });
+    }
+  });
+
+  const straighten = $('#in-straighten');
+  straighten.addEventListener('input', () => {
+    ed.straighten = Number(straighten.value);
+    $('#out-straighten').textContent = `${ed.straighten}°`;
+    refresh();
+  });
+
+  // Adjustments only change colour, so the box is left exactly where it is.
+  const adjust = (id, key, fmt) => {
+    const input = $(`#in-${id}`);
+    input.addEventListener('input', () => {
+      ed[key] = Number(input.value) / 100;
+      $(`#out-${id}`).textContent = fmt(input.value);
+      if (croppable) bake(canvas, FRAME_PREVIEW_MAX);
+      paint();
+    });
+  };
+  adjust('brightness', 'brightness', (v) => `${v}%`);
+  adjust('contrast', 'contrast', (v) => `${v}%`);
+  adjust('saturate', 'saturate', (v) => `${v}%`);
+
+  $('#frame-reset').addEventListener('click', () => {
+    Object.assign(ed, { quarters: 0, straighten: 0, flipH: false, flipV: false, brightness: 1, contrast: 1, saturate: 1 });
+    straighten.value = 0;
+    $('#out-straighten').textContent = '0°';
+    ['brightness', 'contrast', 'saturate'].forEach((k) => {
+      $(`#in-${k}`).value = 100;
+      $(`#out-${k}`).textContent = '100%';
+    });
+    $('#frame-tools').querySelectorAll('[data-flip]').forEach((b) => {
+      b.setAttribute('aria-pressed', 'false');
+      b.classList.remove('btn--gold');
+    });
+    refresh();
+  });
 
   // The box's position within the image, as the percentages object-position uses.
   const focalString = () => {
@@ -1637,52 +2081,100 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
     toast('Framing saved');
   };
 
-  // Render the current box to a new file. `btn` is put back on failure so the
-  // layer stays usable — on success the layer closes and takes it with it.
-  const saveCroppedCopy = async (btn) => {
+  // Bake the edit at output scale and cut the box out of it. The box is stored
+  // as a fraction of the displayed stage, so it survives the change of scale
+  // between the preview bake and this one.
+  const renderEdited = async () => {
+    const fx = g.boxX / g.dispW;
+    const fy = g.boxY / g.dispH;
+    const fw = g.boxW / g.dispW;
+    const fh = g.boxH / g.dispH;
+    const stage = document.createElement('canvas');
+    const { w, h } = bake(stage, FRAME_OUTPUT_MAX);
+    const cropping = fitSelect.value !== 'contain';
+    return renderCrop(stage, cropping
+      ? { sx: fx * w, sy: fy * h, sw: fw * w, sh: fh * h }
+      : { sx: 0, sy: 0, sw: w, sh: h }, outMime);
+  };
+
+  // Two save routes for a real edit. Both re-render the pixels; they differ only
+  // in where the bytes land.
+  const saveCopy = async (btn) => {
     btn.disabled = true;
     try {
-      const scale = g.nw / g.dispW;        // display px → source px
-      const file = await renderCrop(source.img, {
-        sx: g.boxX * scale, sy: g.boxY * scale, sw: g.boxW * scale, sh: g.boxH * scale,
-      });
-      const url = await uploadFile(file);
+      const url = await uploadFile(await renderEdited());
       onSave({ ...m, url, fit: 'cover', position: '50% 50%' });
       closeFrameLayer();
-      toast('Cropped copy uploaded');
+      toast('Edited copy uploaded');
     } catch (err) {
       btn.disabled = false;
       toast(err.message, true);
     }
   };
 
-  // One primary button, two routes: a full-size box stores a focal point, a
-  // shrunken one cuts the copy that keeps the zoom.
-  $('#frame-save').addEventListener('click', (e) => {
-    if (zoomed && croppable) saveCroppedCopy(e.currentTarget);
+  const saveOverOriginal = async (btn) => {
+    if (!confirm('Overwrite the original file? Every product, workshop, section and blog using '
+      + 'this image will show the edited version. This cannot be undone.')) return;
+    btn.disabled = true;
+    try {
+      const { version } = await replaceStoredImage(m.url, await renderEdited());
+      notePlaceReplacement(m.url, version);
+      // The URL is unchanged — that is the point — so the entry keeps it and
+      // only the framing is reset, the crop now being baked into the file.
+      onSave({ ...m, fit: 'cover', position: '50% 50%' });
+      closeFrameLayer();
+      toast('Original replaced everywhere it is used');
+    } catch (err) {
+      btn.disabled = false;
+      toast(err.message, true);
+    }
+  };
+
+  saveBtn.addEventListener('click', (e) => {
+    if ((edited() || zoomed) && croppable) saveCopy(e.currentTarget);
     else saveFraming();
   });
-
-  cropBtn.addEventListener('click', (e) => saveCroppedCopy(e.currentTarget));
+  replaceBtn.addEventListener('click', (e) => saveOverOriginal(e.currentTarget));
 }
 
-// Render a source rectangle to a JPEG File. Output is capped so a 6000px phone
-// photo doesn't become a 6000px web asset.
+// Render a source rectangle to a File. Output is capped so a 6000px phone photo
+// doesn't become a 6000px web asset.
+//
+// The format follows the original's rather than always being JPEG: replacing an
+// image in place keeps its URL, so a `.png` that came back as JPEG bytes would
+// be served under the wrong content type — and a PNG re-encoded as JPEG loses
+// its transparency to a white box.
 const CROP_MAX_EDGE = 2400;
 
-async function renderCrop(img, { sx, sy, sw, sh }) {
+const OUTPUT_MIMES = {
+  png: 'image/png', webp: 'image/webp', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+};
+const EXT_FOR_MIME = { 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' };
+
+// Alpha-capable formats keep their transparency; a JPEG has to land on something,
+// and white matches the letterboxing the public site uses behind photography.
+const keepsAlpha = (mime) => mime === 'image/png' || mime === 'image/webp';
+
+function outputMimeFor(url) {
+  const ext = (String(url).split('?')[0].match(/\.([a-z0-9]+)$/i) || [])[1] || '';
+  return OUTPUT_MIMES[ext.toLowerCase()] || 'image/jpeg';
+}
+
+async function renderCrop(img, { sx, sy, sw, sh }, mime = 'image/jpeg') {
   const outScale = Math.min(1, CROP_MAX_EDGE / Math.max(sw, sh));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sw * outScale));
   canvas.height = Math.max(1, Math.round(sh * outScale));
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!keepsAlpha(mime)) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
   ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
   const blob = await new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not render the crop'))), 'image/jpeg', 0.9);
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not render the crop'))), mime, 0.9);
   });
-  return new File([blob], 'cropped.jpg', { type: 'image/jpeg' });
+  return new File([blob], `edited.${EXT_FOR_MIME[mime] || 'jpg'}`, { type: mime });
 }
 
 // ---------- Upload helper ----------
@@ -1769,6 +2261,20 @@ async function uploadFile(file) {
   return res.url;
 }
 
+// Overwrite the bytes behind an existing URL. Unlike every other upload this
+// creates no new file and no new library record: the URL stays exactly as it is,
+// which is what lets one edit reach every record already pointing at it.
+//
+// Always the proxied route — the presigned direct PUT signs a fresh key, and the
+// server is the only place that can check the key we are overwriting is really
+// ours and really exists.
+async function replaceStoredImage(url, file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('url', url);
+  return api('POST', '/api/admin/upload-replace', fd, true);
+}
+
 // Upload with metadata (used by the Gallery tab's own upload form). Returns the
 // full { url, id, item } response so the caller gets the created library record.
 async function uploadImage(file, meta = {}, onProgress) {
@@ -1840,6 +2346,7 @@ function wireUpload(rootSel) {
   if (!root) return;
   const trigger = $('[data-upload-trigger]', root);
   const pick = $('[data-upload-pick]', root);
+  const edit = $('[data-upload-edit]', root);
   const clear = $('[data-upload-clear]', root);
   const fileInput = $('.upload__input', root);
   const preview = $('.upload__preview', root);
@@ -1847,18 +2354,33 @@ function wireUpload(rootSel) {
 
   const setImage = (url) => {
     hidden.value = url;
-    preview.style.backgroundImage = `url('${url}')`;
+    // previewSrc so an in-place replacement is visible here immediately rather
+    // than showing the bytes the browser already cached for this URL.
+    preview.style.backgroundImage = `url('${previewSrc(url)}')`;
     preview.textContent = '';
+    if (edit) edit.disabled = !url;
   };
 
   trigger?.addEventListener('click', () => fileInput.click());
   pick?.addEventListener('click', () => {
     openGalleryPicker({ onSelect: (item) => { setImage(item.url); toast('Image selected'); } });
   });
+  // Single-image fields get the same editor the media lists and section slots
+  // have — there is no reason a blog's cover photo should be the one image on
+  // the site that can't be straightened or cropped.
+  edit?.addEventListener('click', () => {
+    if (!hidden.value) return;
+    openFrameModal({ url: hidden.value, type: 'image' }, (updated) => {
+      // Only the URL matters here: this field stores a bare URL string, so a
+      // focal point has nowhere to live and a copy is what changes anything.
+      setImage(updated.url || hidden.value);
+    }, { aspect: '1.6' });
+  });
   clear?.addEventListener('click', () => {
     hidden.value = '';
     preview.style.backgroundImage = '';
     preview.textContent = 'No image';
+    if (edit) edit.disabled = true;
   });
   fileInput?.addEventListener('change', async () => {
     const file = fileInput.files[0];
@@ -2117,7 +2639,7 @@ function renderGallery() {
           // one, and that needs the video itself, not a first-frame poster.
           // Muted + loop so a grid of them stays quiet.
           ? `<video class="card__media" src="${escapeAttr(g.url)}" controls loop muted playsinline preload="metadata"></video><span class="card__badge card__badge--corner">Video</span>`
-          : `<img class="card__media" src="${escapeAttr(g.url)}" alt="">`}
+          : `<img class="card__media" src="${escapeAttr(previewSrc(g.url))}" alt="">`}
         <span class="card__tag ${g.public ? 'card__tag--public' : 'card__tag--private'}">${g.public ? 'Public' : 'Private'}</span>
       </div>
       <div class="card__body">
@@ -2126,6 +2648,9 @@ function renderGallery() {
       </div>
       <div class="card__actions">
         <button class="btn btn--ghost btn--sm" data-gallery-edit="${g.id}">Edit</button>
+        ${isVideoItem(g)
+          ? ''
+          : `<button class="btn btn--gold btn--sm" data-gallery-photo="${g.id}">Edit photo</button>`}
         <button class="btn btn--danger btn--sm" data-gallery-del="${g.id}">Delete</button>
       </div>
     </div>
@@ -2139,9 +2664,27 @@ $('#gallery-admin-search')?.addEventListener('input', (e) => {
 
 $('#gallery-grid')?.addEventListener('click', (e) => {
   const editBtn = e.target.closest('[data-gallery-edit]');
+  const photoBtn = e.target.closest('[data-gallery-photo]');
   const delBtn = e.target.closest('[data-gallery-del]');
   if (editBtn) openGalleryForm(state.gallery.find((g) => g.id === editBtn.dataset.galleryEdit));
   if (delBtn) confirmDeleteGallery(delBtn.dataset.galleryDel);
+  if (photoBtn) {
+    // Editing at the source. A library image is the one place where replacing
+    // the original is usually what you want — every record borrowing it picks
+    // the fix up — so the editor opens unlocked, with no slot shape to obey.
+    const item = state.gallery.find((g) => g.id === photoBtn.dataset.galleryPhoto);
+    if (!item) return;
+    openFrameModal({ url: item.url, type: 'image' }, async (updated) => {
+      // A copy is a new file with its own auto-registered record, so the only
+      // thing to persist here is a URL that actually changed.
+      if (updated.url && updated.url !== item.url) {
+        try {
+          await api('PUT', `/api/admin/gallery/${item.id}`, { url: updated.url });
+        } catch (err) { toast(err.message, true); }
+      }
+      loadAll();
+    }, { aspect: 'free' });
+  }
 });
 
 $('#add-gallery-btn')?.addEventListener('click', () => openGalleryForm(null));

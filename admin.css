@@ -302,7 +302,9 @@ body {
   margin-bottom: 4px;
 }
 .section-group__subtitle { color: var(--sc-l3); font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 24px; }
-.section-slots { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+/* `align-items: start` keeps each card as tall as its own contents: a 16:9
+   slot next to a 4:5 one shouldn't be padded out with empty white to match. */
+.section-slots { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); align-items: start; }
 .slot {
   background: var(--w1);
   border-radius: 12px;
@@ -698,6 +700,7 @@ body {
    region bright, everything outside it dimmed by the crop box's own ring
    shadow. */
 .frame-tool { display: flex; flex-direction: column; gap: 20px; }
+.frame-stage { display: flex; flex-direction: column; gap: 16px; }
 .frame-ws {
   position: relative;
   width: 100%;
@@ -709,7 +712,34 @@ body {
   background: #17110d;
   touch-action: none;            /* pointer drags must not scroll the modal */
   user-select: none;
+  cursor: grab;                  /* the whole surface moves the frame */
 }
+.frame-ws.is-dragging { cursor: grabbing; }
+.frame-ws:focus-visible { outline: 2px solid var(--pr-b2); outline-offset: 2px; }
+
+/* The slot itself, drawn from the pixels a save would render. Its shape comes
+   from the destination (--r = width ÷ height), so a 16:9 hero and a 4:5 card
+   are previewed as the different boxes they are. Width is derived from the
+   height cap so a wide banner stays wide and a portrait card stays tall. */
+.frame-preview { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.frame-preview__label {
+  font-family: var(--font-archivo);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sc-l3);
+  align-self: flex-start;
+}
+.frame-preview__box {
+  width: min(100%, calc(240px * var(--r)));
+  aspect-ratio: var(--r);
+  border-radius: 8px;
+  overflow: hidden;
+  /* Stands in for the page behind a photo set to show whole (letterboxed). */
+  background: var(--pr-l5);
+  box-shadow: 0 1px 2px rgba(44, 26, 16, 0.06), 0 6px 18px rgba(44, 26, 16, 0.08);
+}
+.frame-preview__box canvas { display: block; width: 100%; height: 100%; }
 .frame-ws__img {
   position: absolute;
   max-width: none;
@@ -764,6 +794,46 @@ body {
 .frame-crop__handle[data-handle="se"] { bottom: -2px; right: -2px; border-left: none; border-top: none; cursor: nwse-resize; }
 .frame-crop__handle[data-handle="sw"] { bottom: -2px; left: -2px; border-right: none; border-top: none; cursor: nesw-resize; }
 
+/* Pixel-edit controls: rotate / flip / straighten on one row, the three colour
+   sliders on the next. Both wrap on a narrow screen. */
+.frame-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(44, 26, 16, 0.04);
+}
+.frame-tools[hidden] { display: none; }
+.frame-tools--adjust { gap: 8px 24px; }
+.frame-tools--zoom { gap: 12px 20px; }
+.frame-tools--zoom[hidden] { display: none; }
+.frame-tools__group { display: flex; align-items: center; gap: 8px; }
+.frame-tools__label,
+.frame-slider__label {
+  font-family: var(--font-archivo);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sc-l3);
+}
+.frame-slider { display: flex; flex-direction: column; gap: 4px; flex: 1 1 180px; min-width: 160px; }
+.frame-slider__label { display: flex; justify-content: space-between; gap: 8px; }
+.frame-slider__label output { color: var(--sc-100); }
+.frame-slider input[type="range"] { width: 100%; accent-color: var(--pr-b2); }
+
+/* Inline text button (the "crop freely instead" escape hatch on a locked slot). */
+.frame-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--pr-b2);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .frame-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .frame-shape-fixed {
   padding: 12px 0;
@@ -814,6 +884,34 @@ body {
 
 /* ---------- Section slots ---------- */
 .slot__preview { position: relative; display: grid; place-items: center; background: var(--pr-l3); }
+/* A banner is a banner: give the wide slots the columns to be previewed at
+   their real proportion instead of a sliver. */
+.slot--wide { grid-column: 1 / -1; }
+@media (min-width: 900px) { .slot--wide { grid-column: span 2; } }
+/* The preview doubles as the control that opens the framing tool. */
+.slot__preview--live {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  cursor: pointer;
+  font: inherit;
+}
+.slot__preview-hint {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 8px;
+  background: rgba(44, 26, 16, 0.72);
+  color: var(--pr-l5);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.slot__preview--live:hover .slot__preview-hint,
+.slot__preview--live:focus-visible .slot__preview-hint { opacity: 1; }
+.slot__preview--live:focus-visible { outline: 2px solid var(--pr-b2); outline-offset: -2px; }
 .slot__media { position: absolute; inset: 0; width: 100%; height: 100%; }
 .slot__empty { color: var(--sc-l4x); font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; }
 .slot__meta { font-size: 11px; color: var(--sc-l3); letter-spacing: 0.05em; }
@@ -821,6 +919,9 @@ body {
 
 /* Crop tool stacks above the gallery picker, which stacks above the edit modal */
 .frame-backdrop { z-index: 400; }
+/* Wider than the other modals: the workspace and the slot preview both need
+   room, and a banner previewed at 640px reads as a banner. */
+.frame-backdrop .modal { width: min(100%, 920px); }
 
 /* Disabled buttons must read as disabled — the panel toggles `disabled` on the
    reorder arrows, on the crop buttons when the file's pixels can't be read, and
