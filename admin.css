@@ -55,12 +55,17 @@ body {
   flex: 0 0 248px;
   width: 248px;
   height: 100vh;
+  /* dvh keeps the column inside the *visible* viewport on mobile browsers,
+     where the URL bar makes 100vh taller than what is actually on screen. */
+  height: 100dvh;
   display: flex;
   flex-direction: column;
-  gap: 32px;
+  gap: 24px;
   padding: 32px 20px;
   background: var(--w1);
   border-right: 1px solid rgba(44, 26, 16, 0.08);
+  /* The brand and the footer are pinned; only .admin-nav scrolls (below). */
+  overflow: hidden;
 }
 .admin-sidebar__brand { display: flex; flex-direction: column; gap: 4px; padding: 0 12px; }
 .brand-wordmark {
@@ -91,7 +96,39 @@ body {
 }
 .link-quiet:hover { color: var(--sc-100); }
 
-.admin-nav { display: flex; flex-direction: column; gap: 4px; }
+/* Two groups of tabs are taller than a laptop viewport, which used to push the
+   last few tabs and the whole footer (including Sign out) off the bottom of the
+   screen with nothing to scroll. The nav takes the leftover height and scrolls
+   on its own, so the brand stays at the top and Sign out stays reachable at the
+   bottom no matter how short the window is.
+   min-height:0 is what actually lets a flex child shrink below its content. */
+.admin-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Room for the scrollbar so it never sits on top of the active tab's pill. */
+  padding-right: 6px;
+  margin-right: -6px;
+  /* The padding sits inside the faded band, so the first and last tabs are
+     still fully opaque once you scroll to either end. */
+  padding-block: 10px;
+  margin-block: -10px;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 10px,
+                              #000 calc(100% - 10px), transparent 100%);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(44, 26, 16, 0.25) transparent;
+}
+.admin-nav::-webkit-scrollbar { width: 6px; }
+.admin-nav::-webkit-scrollbar-track { background: transparent; }
+.admin-nav::-webkit-scrollbar-thumb {
+  background: rgba(44, 26, 16, 0.2);
+  border-radius: 3px;
+}
+.admin-nav::-webkit-scrollbar-thumb:hover { background: rgba(44, 26, 16, 0.35); }
 .admin-tab {
   background: transparent;
   border: none;
@@ -121,6 +158,7 @@ body {
     flex-basis: auto;
     width: 100%;
     height: auto;
+    overflow: visible;
     flex-direction: row;
     flex-wrap: wrap;
     align-items: center;
@@ -129,7 +167,26 @@ body {
     border-right: none;
     border-bottom: 1px solid rgba(44, 26, 16, 0.08);
   }
-  .admin-nav { flex-direction: row; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
+  /* Grid, not a wrapping flex row: the nav's own flex-basis is a percentage,
+     which leaves its inner size indefinite, so a percentage width/basis on the
+     group headings collapsed to content width and the headings ended up sharing
+     a row with the first tabs. Grid tracks are definite, and `1 / -1` spans a
+     heading across the row unambiguously. */
+  .admin-nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 8px;
+    flex: 1 1 100%;
+    /* The column scroll only makes sense when the sidebar is a full-height rail. */
+    min-height: auto;
+    overflow: visible;
+    padding-right: 0;
+    margin-right: 0;
+    padding-block: 0;
+    margin-block: 0;
+    mask-image: none;
+  }
+  .admin-tab { text-align: center; }
   .admin-sidebar__footer {
     margin-top: 0;
     flex-direction: row;
@@ -1101,9 +1158,16 @@ body {
 .admin-nav__group:first-child { margin-top: 0; }
 
 /* On the stacked mobile sidebar the group heading needs its own row so the
-   tabs after it don't wrap up alongside the label. */
+   tabs after it don't wrap up alongside the label. flex-basis alone is not
+   enough — the default shrink:1 lets the label give up width and share the
+   line, so the basis is pinned with flex-shrink:0. */
 @media (max-width: 800px) {
-  .admin-nav__group { flex-basis: 100%; margin: 12px 0 4px; padding: 0; }
+  .admin-nav__group {
+    grid-column: 1 / -1;
+    margin: 12px 0 0;
+    padding: 0;
+  }
+  .admin-nav__group:first-child { margin-top: 0; }
 }
 
 /* A card on a page-design panel: text fields, image slots, or a link out. */
@@ -1172,3 +1236,65 @@ body {
 .ship-quote td { color: var(--sc-100); text-align: right; }
 .ship-quote__total th,
 .ship-quote__total td { font-size: 16px; border-bottom: none; }
+
+/* -------- Patron testimonials (shared Home / About list) -------- */
+
+.page-card__head--row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.patron-list { display: flex; flex-direction: column; gap: 12px; }
+
+.patron-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 14px;
+  border: 1px solid rgba(44, 26, 16, 0.12);
+  border-radius: 12px;
+  background: var(--pr-l5);
+}
+.patron-row--hidden { opacity: 0.55; }
+
+.patron-row__thumb {
+  flex: 0 0 60px;
+  width: 60px;
+  /* The same 5:6 frame the public band uses, so the thumbnail previews the real
+     crop rather than a shape the visitor will never see. */
+  aspect-ratio: 5 / 6;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--pr-l3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.patron-row__media { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.patron-row__body { flex: 1; min-width: 0; }
+.patron-row__quote {
+  font-family: var(--font-archivo);
+  font-size: 14px;
+  line-height: 21px;
+  color: var(--sc-100);
+}
+.patron-row__meta {
+  margin-top: 6px;
+  font-family: var(--font-archivo);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--sc-l3);
+}
+
+.patron-row__actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.patron-row__move { display: flex; flex-direction: column; gap: 2px; }
+.patron-row__move .btn { padding: 2px 8px; line-height: 1.2; }
+
+@media (max-width: 700px) {
+  .patron-row { flex-wrap: wrap; }
+  .patron-row__actions { width: 100%; justify-content: flex-end; }
+}

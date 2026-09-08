@@ -19,6 +19,7 @@ const state = {
   page: 'homepage',
   content: null,
   shippingConfig: null,
+  testimonials: null,
   products: [],
   workshops: [],
   blogs: [],
@@ -183,6 +184,7 @@ async function loadAll() {
     loadGallery();
     loadContent();
     loadShipping();
+    loadTestimonials();
   } catch (e) {
     toast(e.message, true);
   }
@@ -201,6 +203,7 @@ async function loadAll() {
 const PAGES = {
   homepage: {
     title: 'Home', url: '/index.html', content: 'homepage', sections: 'homepage',
+    patrons: true,
     subtitle: 'The landing page — hero, introduction, promos, patron testimonials, gallery teaser and Quick Reads.',
   },
   shop: {
@@ -232,7 +235,10 @@ const PAGES = {
   },
   about: {
     title: 'About Us', url: '/about.html', content: 'about', sections: 'about',
-    subtitle: 'Our story, sustainability, the team, and the FAQ.',
+    // The same shared list as the home page — edited in either place, shown in
+    // both, so the two bands can never fall out of sync.
+    patrons: true,
+    subtitle: 'Our story, sustainability, the team, the patron testimonials, and the FAQ.',
   },
   enquire: {
     title: 'Enquire', url: '/enquire.html', content: 'enquire', sections: 'enquire',
@@ -413,7 +419,11 @@ function renderPage() {
       <button class="btn btn--primary" data-goto-tab="${cfg.records.tab}">${escapeHtml(cfg.records.label)} →</button>
     </div>` : '';
 
-  body.innerHTML = textCard + imagesCard + recordsCard;
+  const patronsCard = cfg.patrons ? testimonialsCardHTML() : '';
+
+  body.innerHTML = textCard + patronsCard + imagesCard + recordsCard;
+
+  if (cfg.patrons) wirePatronCard(body);
 
   const form = $('#page-content-form');
   if (form) {
@@ -437,6 +447,158 @@ function renderPage() {
 
   body.querySelectorAll('[data-goto-tab]').forEach((btn) => {
     btn.addEventListener('click', () => showTab(btn.dataset.gotoTab));
+  });
+}
+
+// ---------- Patron testimonials ----------
+//
+// One shared list behind every "What our patrons say" band. It is edited from
+// the Home page tab because that is where the section lives, and the About page
+// renders the same list — add a patron once and it appears in both.
+
+async function loadTestimonials() {
+  state.testimonials = await api('GET', '/api/admin/testimonials');
+  if (state.tab === 'pages') renderPage();
+}
+
+// The card list that sits on the Home and About page tabs.
+function testimonialsCardHTML() {
+  const list = state.testimonials;
+  if (!list) return '<div class="page-card"><p class="slot__meta">Loading patrons…</p></div>';
+  const rows = list.length ? list.map((t, i) => {
+    const m = normalizeMedia((t.media && t.media[0]) || t.image);
+    return `
+      <div class="patron-row${t.published === false ? ' patron-row--hidden' : ''}">
+        <div class="patron-row__thumb">${m ? mediaThumbHTML(m, 'patron-row__media') : '<span class="slot__empty">No photo</span>'}</div>
+        <div class="patron-row__body">
+          <p class="patron-row__quote">${escapeHtml(String(t.quote || '').slice(0, 180))}${String(t.quote || '').length > 180 ? '…' : ''}</p>
+          <p class="patron-row__meta">
+            ${escapeHtml([t.author, t.location].filter(Boolean).join(', ')) || 'Unnamed'}
+            · ${'★'.repeat(Math.max(0, Math.min(5, Number(t.rating) || 0))) || 'no rating'}
+            ${t.published === false ? ' · <strong>hidden</strong>' : ''}
+          </p>
+        </div>
+        <div class="patron-row__actions">
+          <div class="patron-row__move">
+            <button class="btn btn--ghost btn--sm" data-patron-move="up" data-id="${escapeAttr(t.id)}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+            <button class="btn btn--ghost btn--sm" data-patron-move="down" data-id="${escapeAttr(t.id)}" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+          </div>
+          <button class="btn btn--ghost btn--sm" data-patron-edit="${escapeAttr(t.id)}">Edit</button>
+          <button class="btn btn--danger btn--sm" data-patron-delete="${escapeAttr(t.id)}">Delete</button>
+        </div>
+      </div>`;
+  }).join('') : '<p class="slot__meta">No patrons yet. Add the first one.</p>';
+
+  return `
+    <div class="page-card">
+      <div class="page-card__head page-card__head--row">
+        <div>
+          <h3 class="page-card__title">Patron testimonials</h3>
+          <p class="page-card__hint">The "What our patrons say" band. This is one shared list — it appears on the home page and on About Us, so a patron added here shows up in both. Each patron can have their own photo or video, which moves with their quote as the carousel advances.</p>
+        </div>
+        <button class="btn btn--primary" data-patron-new>+ Add patron</button>
+      </div>
+      <div class="patron-list">${rows}</div>
+    </div>`;
+}
+
+function wirePatronCard(root) {
+  root.querySelector('[data-patron-new]')?.addEventListener('click', () => openPatronEditor(null));
+  root.querySelectorAll('[data-patron-edit]').forEach((b) => b.addEventListener('click', () =>
+    openPatronEditor(state.testimonials.find((t) => t.id === b.dataset.patronEdit))));
+  root.querySelectorAll('[data-patron-delete]').forEach((b) => b.addEventListener('click', async () => {
+    const t = state.testimonials.find((x) => x.id === b.dataset.patronDelete);
+    if (!confirm(`Remove ${t?.author || 'this patron'} from the testimonials?`)) return;
+    try {
+      await api('DELETE', `/api/admin/testimonials/${encodeURIComponent(b.dataset.patronDelete)}`);
+      toast('Patron removed');
+      await loadTestimonials();
+    } catch (e) { toast(e.message, true); }
+  }));
+  root.querySelectorAll('[data-patron-move]').forEach((b) => b.addEventListener('click', async () => {
+    const ids = state.testimonials.map((t) => t.id);
+    const i = ids.indexOf(b.dataset.id);
+    const j = b.dataset.patronMove === 'up' ? i - 1 : i + 1;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    try {
+      await api('PUT', '/api/admin/testimonials-order', { ids });
+      await loadTestimonials();
+    } catch (e) { toast(e.message, true); }
+  }));
+}
+
+function openPatronEditor(patron) {
+  const isEdit = !!patron;
+  const t = patron || { quote: '', author: '', location: '', rating: 5, published: true, media: [] };
+  openEditor(isEdit ? `Edit — ${t.author || 'patron'}` : 'Add patron', `
+    <form id="patron-form" class="form-grid" autocomplete="off">
+      <div id="patron-media"></div>
+      <label class="field">
+        <span class="field__label">Quote</span>
+        <textarea name="quote" required rows="4" maxlength="1000">${escapeHtml(t.quote || '')}</textarea>
+        <span class="field__hint">What the patron said. Quotation marks are added by the page — just type the words.</span>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span class="field__label">Name</span>
+          <input name="author" required value="${escapeAttr(t.author || '')}" placeholder="e.g. Priya M.">
+        </label>
+        <label class="field">
+          <span class="field__label">City (optional)</span>
+          <input name="location" value="${escapeAttr(t.location || '')}" placeholder="e.g. Bangalore">
+        </label>
+        <label class="field">
+          <span class="field__label">Stars</span>
+          <select name="rating">
+            ${[5, 4, 3, 2, 1, 0].map((n) =>
+              `<option value="${n}" ${Number(t.rating) === n ? 'selected' : ''}>${n ? '★'.repeat(n) : 'No stars'}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="patron-published" name="published" ${t.published === false ? '' : 'checked'}>
+        <label for="patron-published">Show on the site</label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn--primary">${isEdit ? 'Save changes' : 'Add patron'}</button>
+      </div>
+    </form>
+  `);
+
+  // Same media editor as products and workshops: upload or pick from the
+  // library, then crop/reposition. `fit` and `position` ride along to the site,
+  // so a portrait photo, a landscape still and a video all sit correctly in the
+  // band's fixed frame.
+  const media = mountMediaEditor($('#patron-media'), entityMedia(t, 'image'), {
+    label: 'Photo or video',
+    hint: 'Shown beside the quote. Use “Edit photo” to choose which part stays in frame — the band is a portrait 5:6 box.',
+  });
+
+  $('#patron-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const payload = {
+      quote: fd.get('quote'),
+      author: fd.get('author'),
+      location: fd.get('location'),
+      rating: Number(fd.get('rating')),
+      published: fd.get('published') === 'on',
+      media: media.getValue(),
+    };
+    try {
+      if (isEdit) {
+        await api('PUT', `/api/admin/testimonials/${encodeURIComponent(t.id)}`, payload);
+        toast('Patron updated');
+      } else {
+        await api('POST', '/api/admin/testimonials', payload);
+        toast('Patron added');
+      }
+      closeEditor({ force: true });
+      await loadTestimonials();
+    } catch (err) {
+      toast(err.message, true);
+    }
   });
 }
 
@@ -4093,7 +4255,10 @@ function markEditorDirty() {
 // derived rather than repeated at every call site.
 const TAB_LABELS = {
   products: 'Products', orders: 'Orders', workshops: 'Workshops', blogs: 'Blogs',
-  sections: 'Section images', gallery: 'Gallery', discounts: 'Discounts', admins: 'Admins',
+  sections: 'All images', gallery: 'Gallery', discounts: 'Discounts', admins: 'Admins',
+  shipping: 'Shipping', enquiries: 'Enquiries',
+  // The page-design panel names itself after the page being edited.
+  pages: 'page design',
 };
 
 function openEditor(title, bodyHtml) {
