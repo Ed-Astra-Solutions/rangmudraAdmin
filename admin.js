@@ -14,7 +14,11 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || '',
   email: '',
-  tab: 'products',
+  tab: 'pages',
+  // Which website page the "Website page design" group is showing.
+  page: 'homepage',
+  content: null,
+  shippingConfig: null,
   products: [],
   workshops: [],
   blogs: [],
@@ -122,18 +126,35 @@ $('#logout-btn').addEventListener('click', async () => {
 
 // ---------- Tabs ----------
 
+// Show a panel. `page` is only meaningful for the shared "pages" panel, whose
+// content depends on which website page the sidebar entry pointed at.
+function showTab(tab, page) {
+  const go = () => {
+    state.tab = tab;
+    if (page) state.page = page;
+    $$('.admin-tab').forEach((b) => {
+      const active = b.dataset.tab === tab
+        && (b.dataset.tab !== 'pages' || b.dataset.page === state.page);
+      b.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    $$('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== tab; });
+    if (tab === 'pages') renderPage();
+    if (tab === 'shipping') renderShipping();
+  };
+  // Leaving an open editor runs the unsaved-changes guard first; the switch
+  // only happens once it actually closes.
+  if (editorIsOpen()) closeEditor({ then: go });
+  else go();
+}
+
 $$('.admin-tab').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const go = () => {
-      state.tab = btn.dataset.tab;
-      $$('.admin-tab').forEach((b) => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
-      $$('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== state.tab; });
-    };
-    // Leaving an open editor runs the unsaved-changes guard first; the switch
-    // only happens once it actually closes.
-    if (editorIsOpen()) closeEditor({ then: go });
-    else go();
-  });
+  btn.addEventListener('click', () => showTab(btn.dataset.tab, btn.dataset.page));
+});
+
+// "← Back to page design" on the record panels, which are reached from a page
+// rather than from the sidebar.
+$$('[data-goto-page]').forEach((btn) => {
+  btn.addEventListener('click', () => showTab('pages', btn.dataset.gotoPage));
 });
 
 // ---------- Data load ----------
@@ -160,9 +181,440 @@ async function loadAll() {
     loadOrders();
     loadEnquiries();
     loadGallery();
+    loadContent();
+    loadShipping();
   } catch (e) {
     toast(e.message, true);
   }
+}
+
+// ---------- Website page design ----------
+
+// One entry per item in the sidebar's "Website page design" group, in the same
+// order as the public site's navigation.
+//
+//   content  — key in /api/content whose fields this page edits
+//   sections — key in SECTION_LABELS whose image slots this page owns
+//   only     — narrow the slots/fields to a subset (Corporates is a slice of
+//              the Workshops page, not a page of its own)
+//   records  — an existing panel this page's list content lives in
+const PAGES = {
+  homepage: {
+    title: 'Home', url: '/index.html', content: 'homepage', sections: 'homepage',
+    subtitle: 'The landing page — hero, introduction, promos, patron testimonials, gallery teaser and Quick Reads.',
+  },
+  shop: {
+    title: 'Shop', url: '/shop.html', content: 'shop', sections: 'shop',
+    records: { tab: 'products', label: 'Manage products' },
+    subtitle: 'The Collection page. Individual products live under Admin features → Products.',
+  },
+  workshops: {
+    title: 'Workshops', url: '/workshops.html', content: 'workshops', sections: 'workshops',
+    records: { tab: 'workshops', label: 'Manage workshops' },
+    subtitle: 'The workshops landing page and the three category landing pages.',
+  },
+  corporates: {
+    title: 'Corporates', url: '/workshop-category.html?cat=corporate',
+    content: 'workshops', contentOnly: ['corporate-eyebrow', 'corporate-title', 'corporate-desc'],
+    sections: 'workshops', sectionsOnly: ['category-corporate', 'category-hero-corporate'],
+    records: { tab: 'workshops', label: 'Manage workshops' },
+    subtitle: 'The Corporates entry in the site menu — the corporate workshops landing page.',
+  },
+  gallery: {
+    title: 'Gallery', url: '/gallery.html', content: 'gallery', sections: 'gallery',
+    records: { tab: 'gallery', label: 'Manage the media library' },
+    subtitle: 'The design gallery. Images shown here are the library entries marked Public.',
+  },
+  blogs: {
+    title: 'Blogs', url: '/blogs.html', content: 'blogs', sections: 'blogs',
+    records: { tab: 'blogs', label: 'Manage blog posts' },
+    subtitle: 'The Blogs landing page. Posts also feed the Quick Reads strip on the home page.',
+  },
+  about: {
+    title: 'About Us', url: '/about.html', content: 'about', sections: 'about',
+    subtitle: 'Our story, sustainability, the team, and the FAQ.',
+  },
+  enquire: {
+    title: 'Enquire', url: '/enquire.html', content: 'enquire', sections: 'enquire',
+    subtitle: 'Connect With Us — the craft carousel, contact cards and enquiry form.',
+  },
+  footer: {
+    title: 'Footer', url: '/index.html#footer', content: 'footer',
+    subtitle: 'The footer on every page, plus the WhatsApp button and the bottom strip.',
+  },
+};
+
+// Friendly names for the copy fields. Anything missing falls back to the key
+// itself with dashes turned into spaces, so a new field is still editable the
+// moment it is added to content.json.
+const CONTENT_LABELS = {
+  'intro-eyebrow': 'Introduction eyebrow',
+  'intro-heading': 'Introduction heading',
+  'intro-body-1': 'Introduction paragraph 1',
+  'intro-body-2': 'Introduction paragraph 2',
+  'workshops-promo-cta': 'Workshops promo — button',
+  'workshops-promo-meta': 'Workshops promo — caption',
+  'shop-promo-cta': 'Shop promo — button',
+  'shop-promo-meta': 'Shop promo — caption',
+  'testimonials-heading': 'Testimonials heading (one line per line break)',
+  'testimonial-1-quote': 'Testimonial 1 — quote',
+  'testimonial-1-author': 'Testimonial 1 — name',
+  'testimonial-2-quote': 'Testimonial 2 — quote',
+  'testimonial-2-author': 'Testimonial 2 — name',
+  'testimonial-3-quote': 'Testimonial 3 — quote',
+  'testimonial-3-author': 'Testimonial 3 — name',
+  'gallery-heading': 'Gallery teaser — heading',
+  'gallery-body': 'Gallery teaser — paragraph',
+  'gallery-cta': 'Gallery teaser — button',
+  'reads-heading': 'Quick Reads heading',
+  'reads-link': 'Quick Reads — view-all link',
+  'hero-eyebrow': 'Hero eyebrow',
+  'hero-title': 'Hero heading',
+  'hero-subtitle': 'Hero paragraph',
+  'toolbar-label': 'Toolbar label',
+  'experience-eyebrow': 'Experience — eyebrow',
+  'experience-title': 'Experience — heading',
+  'experience-desc': 'Experience — description',
+  'corporate-eyebrow': 'Corporate — eyebrow',
+  'corporate-title': 'Corporate — heading',
+  'corporate-desc': 'Corporate — description',
+  'curated-eyebrow': 'Curated — eyebrow',
+  'curated-title': 'Curated — heading',
+  'curated-desc': 'Curated — description',
+  'enquire-panel-title': 'Enquiry panel heading',
+  'story-eyebrow': 'Our Story — eyebrow',
+  'story-heading': 'Our Story — heading',
+  'story-body-1': 'Our Story — paragraph 1',
+  'story-body-2': 'Our Story — paragraph 2',
+  'story-body-3': 'Our Story — paragraph 3',
+  'sustainability-heading': 'Sustainability — heading',
+  'sustainability-body-1': 'Sustainability — paragraph 1',
+  'sustainability-body-2': 'Sustainability — paragraph 2',
+  'sustainability-body-3': 'Sustainability — paragraph 3',
+  'team-eyebrow': 'Our Team — eyebrow',
+  'team-heading': 'Our Team — heading',
+  'team-body-1': 'Our Team — paragraph 1',
+  'team-body-2': 'Our Team — paragraph 2',
+  'faq-heading': 'FAQ heading',
+  'featured-eyebrow': 'Featured label',
+  'recent-eyebrow': 'Recent posts label',
+  'empty-text': 'Empty-results message',
+  'scroll-label': 'Scroll hint',
+  'craft-eyebrow': 'Craft carousel — eyebrow',
+  'craft-heading': 'Craft carousel — heading',
+  'form-eyebrow': 'Form — eyebrow',
+  'form-heading': 'Form — heading',
+  'form-subtitle': 'Form — paragraph',
+  'card-visit-title': 'Visit card — title',
+  'card-visit-line-1': 'Visit card — line 1',
+  'card-visit-line-2': 'Visit card — line 2',
+  'card-call-title': 'Call card — title',
+  'card-call-line-1': 'Call card — line 1',
+  'card-call-line-2': 'Call card — line 2',
+  'card-email-title': 'Email card — title',
+  'card-email-line-1': 'Email card — line 1',
+  'card-email-line-2': 'Email card — line 2',
+  tagline: 'Tagline',
+  description: 'Brand paragraph',
+  'instagram-url': 'Instagram link',
+  'facebook-url': 'Facebook link',
+  'youtube-url': 'YouTube link',
+  'x-url': 'X (Twitter) link',
+  'col-1-title': 'Column 1 heading',
+  'col-2-title': 'Column 2 heading',
+  'col-3-title': 'Column 3 heading',
+  address: 'Studio address (one line per line break)',
+  phone: 'Phone number',
+  'phone-note': 'Phone — note below',
+  email: 'Email address',
+  'email-note': 'Email — note below',
+  'whatsapp-link': 'WhatsApp button link (wa.me/…)',
+  'newsletter-title': 'Newsletter heading',
+  'newsletter-placeholder': 'Newsletter input placeholder',
+  copyright: 'Copyright line',
+};
+
+function contentLabel(key) {
+  return CONTENT_LABELS[key] || key.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+
+// Long copy gets a textarea, one-liners an input. 60 characters is roughly
+// where a heading stops being a heading.
+function isLongCopy(value) {
+  return String(value || '').length > 60 || String(value || '').includes('\n');
+}
+
+async function loadContent() {
+  state.content = await api('GET', '/api/content');
+  if (state.tab === 'pages') renderPage();
+}
+
+function renderPage() {
+  const cfg = PAGES[state.page] || PAGES.homepage;
+  const titleEl = $('#page-title');
+  const subEl = $('#page-subtitle');
+  const linkEl = $('#page-view-link');
+  const body = $('#page-body');
+  if (!body) return;
+
+  titleEl.textContent = cfg.title;
+  subEl.textContent = cfg.subtitle || '';
+  linkEl.href = cfg.url;
+
+  const fields = (state.content && state.content[cfg.content]) || null;
+  const keys = fields
+    ? Object.keys(fields).filter((k) => !cfg.contentOnly || cfg.contentOnly.includes(k))
+    : [];
+
+  const textCard = !state.content
+    ? '<div class="page-card"><p class="slot__meta">Loading page text…</p></div>'
+    : `
+    <div class="page-card">
+      <div class="page-card__head">
+        <h3 class="page-card__title">Text &amp; headings</h3>
+        <p class="page-card__hint">Edit any wording on this page. Changes go live as soon as you save — no redeploy.</p>
+      </div>
+      ${keys.length ? `
+      <form id="page-content-form" class="page-fields" autocomplete="off">
+        ${keys.map((k) => {
+          const v = fields[k] ?? '';
+          const id = `content-${cfg.content}-${k}`;
+          return `
+            <label class="field">
+              <span class="field__label">${escapeHtml(contentLabel(k))}</span>
+              ${isLongCopy(v)
+                ? `<textarea id="${id}" name="${escapeHtml(k)}" rows="${Math.min(8, Math.max(3, Math.ceil(String(v).length / 70)))}">${escapeHtml(v)}</textarea>`
+                : `<input type="text" id="${id}" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`}
+            </label>`;
+        }).join('')}
+        <div class="form-actions">
+          <button type="button" class="btn btn--ghost" id="page-content-reset">Undo changes</button>
+          <button type="submit" class="btn btn--primary">Save text</button>
+        </div>
+      </form>` : '<p class="slot__meta">This page has no editable text yet.</p>'}
+    </div>`;
+
+  const slots = cfg.sections ? sectionSlotsHTML(cfg.sections, cfg.sectionsOnly) : '';
+  const imagesCard = slots ? `
+    <div class="page-card">
+      <div class="page-card__head">
+        <h3 class="page-card__title">Images &amp; video</h3>
+        <p class="page-card__hint">Every picture on this page. Upload a new one, pick one from the media library, or adjust how it is cropped.</p>
+      </div>
+      <div class="section-slots">${slots}</div>
+    </div>` : '';
+
+  const recordsCard = cfg.records ? `
+    <div class="page-card page-card--link">
+      <div>
+        <h3 class="page-card__title">${escapeHtml(cfg.records.label)}</h3>
+        <p class="page-card__hint">The individual entries this page lists.</p>
+      </div>
+      <button class="btn btn--primary" data-goto-tab="${cfg.records.tab}">${escapeHtml(cfg.records.label)} →</button>
+    </div>` : '';
+
+  body.innerHTML = textCard + imagesCard + recordsCard;
+
+  const form = $('#page-content-form');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {};
+      keys.forEach((k) => {
+        const el = form.elements[k];
+        if (el) payload[k] = el.value;
+      });
+      try {
+        const res = await api('PUT', `/api/admin/content/${encodeURIComponent(cfg.content)}`, { fields: payload });
+        state.content[cfg.content] = res.fields;
+        toast('Page text saved');
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+    $('#page-content-reset').addEventListener('click', renderPage);
+  }
+
+  body.querySelectorAll('[data-goto-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => showTab(btn.dataset.gotoTab));
+  });
+}
+
+// ---------- Shipping ----------
+
+async function loadShipping() {
+  try {
+    state.shippingConfig = await api('GET', '/api/admin/shipping');
+    if (state.tab === 'shipping') renderShipping();
+  } catch (e) {
+    // Not fatal — the panel shows the error when it is opened.
+    state.shippingConfig = { error: e.message };
+  }
+}
+
+function renderShipping() {
+  const body = $('#shipping-body');
+  if (!body) return;
+  const data = state.shippingConfig;
+  if (!data) { body.innerHTML = '<p class="slot__meta">Loading…</p>'; return; }
+  if (data.error) { body.innerHTML = `<p class="slot__meta">Could not load shipping settings: ${escapeHtml(data.error)}</p>`; return; }
+
+  const c = data.config;
+  const d = data.defaults;
+  // Every category the catalogue actually uses, plus whatever is already
+  // configured, so a new category is weighable the moment a product uses it.
+  const cats = [...new Set([
+    ...Object.keys(c.categoryWeights),
+    ...state.products.map((p) => String(p.category || '').toLowerCase()).filter(Boolean),
+  ])].sort();
+
+  body.innerHTML = `
+    <form id="shipping-form" class="form" autocomplete="off">
+      <div class="page-card">
+        <div class="page-card__head">
+          <h3 class="page-card__title">Dispatch &amp; packaging</h3>
+          <p class="page-card__hint">The PIN code parcels are booked from. Distance to the customer's PIN sets the Speed Post slab.</p>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span class="field__label">Dispatch PIN code</span>
+            <input name="originPincode" value="${escapeAttr(c.originPincode)}" pattern="[1-9][0-9]{5}" placeholder="${escapeAttr(d.originPincode)}">
+          </label>
+          <label class="field">
+            <span class="field__label">Packaging weight (grams)</span>
+            <input name="packagingWeightGrams" type="number" min="0" step="1" value="${c.packagingWeightGrams}">
+            <span class="field__hint">Box, tissue, invoice and tape — added once per order.</span>
+          </label>
+          <label class="field">
+            <span class="field__label">Default item weight (grams)</span>
+            <input name="defaultItemWeightGrams" type="number" min="1" step="1" value="${c.defaultItemWeightGrams}">
+            <span class="field__hint">Used when a product has neither its own weight nor a category weight.</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="page-card">
+        <div class="page-card__head">
+          <h3 class="page-card__title">Package size</h3>
+          <p class="page-card__hint">India Post bills actual weight, so this is off by default. Set a courier's volumetric divisor (commonly 5000, i.e. L×W×H cm ÷ 5000 = kg) and the heavier of actual vs volumetric weight is charged. Each product's own L×W×H is set on its product page.</p>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span class="field__label">Volumetric divisor</span>
+            <input name="volumetricDivisor" type="number" min="0" step="1" value="${c.volumetricDivisor}" placeholder="0 = off">
+          </label>
+          <label class="field">
+            <span class="field__label">Handling fee (₹ per order)</span>
+            <input name="handlingFee" type="number" min="0" step="1" value="${c.handlingFee}">
+          </label>
+          <label class="field">
+            <span class="field__label">GST on postage (%)</span>
+            <input name="gstPercent" type="number" min="0" max="100" step="0.1" value="${c.gstPercent}">
+          </label>
+        </div>
+      </div>
+
+      <div class="page-card">
+        <div class="page-card__head">
+          <h3 class="page-card__title">Weight per category</h3>
+          <p class="page-card__hint">The fallback weight for a product that has no weight of its own. Grams per piece.</p>
+        </div>
+        <div class="field-row field-row--wrap">
+          ${cats.map((cat) => `
+            <label class="field">
+              <span class="field__label">${escapeHtml(cat)}</span>
+              <input data-cat-weight="${escapeAttr(cat)}" type="number" min="1" step="1"
+                     value="${c.categoryWeights[cat] ?? ''}" placeholder="${c.defaultItemWeightGrams}">
+            </label>`).join('')}
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" id="shipping-reset">Undo changes</button>
+        <button type="submit" class="btn btn--primary">Save shipping settings</button>
+      </div>
+    </form>
+
+    <div class="page-card">
+      <div class="page-card__head">
+        <h3 class="page-card__title">Test a PIN code</h3>
+        <p class="page-card__hint">Prices a real delivery with the settings currently saved — the same code the checkout uses.</p>
+      </div>
+      <div class="field-row">
+        <label class="field">
+          <span class="field__label">Destination PIN code</span>
+          <input id="ship-test-pin" inputmode="numeric" maxlength="6" placeholder="e.g. 110001">
+        </label>
+        <label class="field">
+          <span class="field__label">Parcel weight (grams)</span>
+          <input id="ship-test-weight" type="number" min="1" step="1" placeholder="${c.defaultItemWeightGrams + c.packagingWeightGrams}">
+        </label>
+        <div class="field" style="justify-content:flex-end;">
+          <button type="button" class="btn btn--gold" id="ship-test-btn">Get quote</button>
+        </div>
+      </div>
+      <div id="ship-test-result"></div>
+    </div>
+  `;
+
+  $('#shipping-reset').addEventListener('click', renderShipping);
+
+  $('#shipping-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const num = (name) => Number(form.elements[name].value);
+    const categoryWeights = {};
+    form.querySelectorAll('[data-cat-weight]').forEach((input) => {
+      const v = Number(input.value);
+      if (v > 0) categoryWeights[input.dataset.catWeight] = v;
+    });
+    const patch = {
+      originPincode: form.elements.originPincode.value.trim(),
+      packagingWeightGrams: num('packagingWeightGrams'),
+      defaultItemWeightGrams: num('defaultItemWeightGrams'),
+      volumetricDivisor: num('volumetricDivisor'),
+      handlingFee: num('handlingFee'),
+      gstPercent: num('gstPercent'),
+      categoryWeights,
+    };
+    try {
+      const res = await api('PUT', '/api/admin/shipping', patch);
+      state.shippingConfig = { ...state.shippingConfig, config: res.config };
+      toast('Shipping settings saved');
+      renderShipping();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  const runQuote = async () => {
+    const out = $('#ship-test-result');
+    const pin = $('#ship-test-pin').value.trim();
+    const weight = $('#ship-test-weight').value.trim();
+    out.innerHTML = '<p class="slot__meta">Checking…</p>';
+    try {
+      const qs = new URLSearchParams({ pincode: pin });
+      if (weight) qs.set('weight', weight);
+      const res = await fetch(apiUrl(`/api/shipping/quote?${qs}`));
+      const q = await res.json();
+      if (!res.ok) throw new Error(q.error || 'Could not price that PIN code');
+      out.innerHTML = `
+        <table class="ship-quote">
+          <tr><th>Destination</th><td>${escapeHtml([q.office, q.district, q.state].filter(Boolean).join(', ')) || q.pincode}</td></tr>
+          <tr><th>From</th><td>${escapeHtml(q.origin)}</td></tr>
+          <tr><th>Zone</th><td>${escapeHtml(q.zoneLabel)}${q.distanceKm ? ` · ~${q.distanceKm} km` : ''}</td></tr>
+          <tr><th>Billed weight</th><td>${q.weightGrams} g</td></tr>
+          <tr><th>Postage</th><td>₹${q.postage}</td></tr>
+          <tr><th>GST (${q.gstPercent}%)</th><td>₹${q.gst}</td></tr>
+          <tr class="ship-quote__total"><th>Delivery fee</th><td>₹${q.deliveryFee}</td></tr>
+        </table>
+        ${q.deliverable === false ? '<p class="slot__meta">India Post lists this PIN as non-delivery.</p>' : ''}`;
+    } catch (err) {
+      out.innerHTML = `<p class="slot__meta">${escapeHtml(err.message)}</p>`;
+    }
+  };
+  $('#ship-test-btn').addEventListener('click', runQuote);
+  $('#ship-test-pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') runQuote(); });
 }
 
 // ---------- Products ----------
@@ -361,8 +813,27 @@ function openProductModal(product) {
           <input name="taxPercent" type="number" min="0" max="100" step="0.01" value="${taxPct}" placeholder="Store default (${DEFAULT_TAX_PERCENT}%)">
           <span class="field__hint">Leave blank to charge the store default of ${DEFAULT_TAX_PERCENT}%. Enter 0 for a tax-free item.</span>
         </label>
-        <div class="field"></div>
+        <label class="field">
+          <span class="field__label">Shipping weight (grams)</span>
+          <input name="weightGrams" type="number" min="0" step="1" value="${p.weightGrams ?? ''}" placeholder="Category default">
+          <span class="field__hint">What the packed piece weighs. Leave blank to use the category weight set under Shipping.</span>
+        </label>
       </div>
+      <div class="field-row">
+        <label class="field">
+          <span class="field__label">Package length (cm)</span>
+          <input name="dimLength" type="number" min="0" step="0.1" value="${p.dimensionsCm?.length ?? ''}" placeholder="e.g. 30">
+        </label>
+        <label class="field">
+          <span class="field__label">Package width (cm)</span>
+          <input name="dimWidth" type="number" min="0" step="0.1" value="${p.dimensionsCm?.width ?? ''}" placeholder="e.g. 22">
+        </label>
+        <label class="field">
+          <span class="field__label">Package height (cm)</span>
+          <input name="dimHeight" type="number" min="0" step="0.1" value="${p.dimensionsCm?.height ?? ''}" placeholder="e.g. 6">
+        </label>
+      </div>
+      <p class="field__hint">Package size only changes the price when a volumetric divisor is set under Admin features → Shipping (India Post bills actual weight, couriers bill the greater of the two).</p>
       <label class="field">
         <span class="field__label">Tags (comma-separated, e.g. INDIGO, TOPWEAR)</span>
         <input name="tags" value="${escapeAttr((p.tags || []).join(', '))}">
@@ -442,6 +913,17 @@ function openProductModal(product) {
         if (raw === '') return null;
         const v = Number(raw);
         return Number.isFinite(v) && v >= 0 ? Math.min(100, v) : null;
+      })(),
+      // Delivery inputs. Blank = fall back to the category weight / no size.
+      weightGrams: (() => {
+        const raw = (fd.get('weightGrams') || '').toString().trim();
+        const v = Number(raw);
+        return raw !== '' && Number.isFinite(v) && v > 0 ? v : null;
+      })(),
+      dimensionsCm: (() => {
+        const n = (k) => Number((fd.get(k) || '').toString().trim());
+        const d = { length: n('dimLength'), width: n('dimWidth'), height: n('dimHeight') };
+        return d.length > 0 && d.width > 0 && d.height > 0 ? d : null;
       })(),
       // The full ordered gallery. The server derives `images` from it, so the
       // two fields can't drift apart.
@@ -937,22 +1419,51 @@ async function confirmDeleteBlog(id) {
 
 // ---------- Sections ----------
 
+// Ordered to match the public site's navigation — Home, Shop, Workshops,
+// Corporates, Gallery, Blogs, About Us, Enquire — so a missing section is easy
+// to spot against the live menu.
 const SECTION_LABELS = {
   homepage: {
-    _title: 'Homepage',
+    _title: 'Home',
     _file: 'index.html',
     hero: 'Hero (full-bleed background)',
     introduction: 'Introduction still-life',
     'workshops-promo': 'Workshops promo banner',
     'shop-promo': 'Shop promo banner',
-    testimonials: 'Testimonials backdrop',
-    gallery: 'Gallery of experience',
-    'quick-reads-large': 'Quick Reads — large card',
-    'quick-reads-1': 'Quick Reads — thumb 1',
-    'quick-reads-2': 'Quick Reads — thumb 2',
+    'testimonial-1': 'Patron testimonial 1 — photo/video',
+    'testimonial-2': 'Patron testimonial 2 — photo/video',
+    'testimonial-3': 'Patron testimonial 3 — photo/video',
+    gallery: 'Gallery teaser photo',
+  },
+  shop: {
+    _title: 'Shop',
+    _file: 'shop.html',
+    hero: 'Shop hero (hanging fabrics)',
+  },
+  workshops: {
+    _title: 'Workshops',
+    _file: 'workshops.html + workshop-category.html',
+    hero: 'Hero band',
+    'category-experience': 'Category card — Experience',
+    'category-corporate': 'Category card — Corporate',
+    'category-curated': 'Category card — Curated',
+    'category-hero-experience': 'Experience landing page — banner',
+    'category-hero-corporate': 'Corporate landing page — banner',
+    'category-hero-curated': 'Curated landing page — banner',
+  },
+  gallery: {
+    _title: 'Gallery',
+    _file: 'gallery.html',
+    hero: 'Gallery hero banner',
+  },
+  blogs: {
+    _title: 'Blogs',
+    _file: 'blogs.html',
+    hero: 'Blogs landing page — banner',
   },
   about: {
-    _title: 'About page',
+    _title: 'About Us',
+    _file: 'about.html',
     hero: 'Hero block image',
     story: 'Our Story',
     sustainability: 'Sustainability',
@@ -960,52 +1471,25 @@ const SECTION_LABELS = {
     'team-secondary': 'Our Team — secondary',
     'faq-decor': 'FAQ decorative',
   },
-  workshops: {
-    _title: 'Workshops landing',
-    _file: 'workshops.html + workshop-category.html',
-    hero: 'Hero band',
-    'category-experience': 'Category card — Experience',
-    'category-corporate': 'Category card — Corporate',
-    'category-curated': 'Category card — Curated',
-    'category-hero-experience': 'Experience page — banner',
-    'category-hero-corporate': 'Corporate page — banner',
-    'category-hero-curated': 'Curated page — banner',
-  },
-  shop: {
-    _title: 'Shop',
-    hero: 'Shop hero (hanging fabrics)',
-  },
   enquire: {
     _title: 'Enquire',
+    _file: 'enquire.html',
     hero: 'Enquire hero',
     'carousel-1': 'Artistic Experience slide 1',
     'carousel-2': 'Artistic Experience slide 2',
     'carousel-3': 'Artistic Experience slide 3',
   },
-  blogs: {
-    _title: 'Journal',
-    hero: 'Journal hero banner',
-  },
-  gallery: {
-    _title: 'Design gallery',
-    hero: 'Gallery hero banner',
-  },
 };
 
-// The real shape of each slot on the public site, as width ÷ height. The slot
-// preview is drawn at this ratio and the crop tool opens locked to it, so the
-// admin frames against the actual box the photo will land in instead of
-// guessing from a dropdown.
 const SECTION_SHAPES = {
   'homepage.hero': [1.7778, 'Full-bleed hero (16:9)'],
   'homepage.introduction': [0.87, 'Still-life column (~7:8)'],
   'homepage.workshops-promo': [1.7778, 'Promo banner (16:9)'],
   'homepage.shop-promo': [1.7778, 'Promo banner (16:9)'],
-  'homepage.testimonials': [0.75, 'Portrait panel (3:4)'],
+  'homepage.testimonial-1': [0.8333, 'Portrait panel (5:6)'],
+  'homepage.testimonial-2': [0.8333, 'Portrait panel (5:6)'],
+  'homepage.testimonial-3': [0.8333, 'Portrait panel (5:6)'],
   'homepage.gallery': [2.4, 'Full-bleed strip (12:5)'],
-  'homepage.quick-reads-large': [1.3333, 'Large blog card (4:3)'],
-  'homepage.quick-reads-1': [1, 'Blog thumb (1:1)'],
-  'homepage.quick-reads-2': [1, 'Blog thumb (1:1)'],
   'about.hero': [3.2, 'Hero band (16:5)'],
   'about.story': [0.8, 'Story image (4:5)'],
   'about.sustainability': [1.3333, 'Sustainability image (4:3)'],
@@ -1034,15 +1518,19 @@ const DEFAULT_SHAPE = [1.6, 'Section band (16:10)'];
 // public page renders that box. The first entry is the site's default, used
 // whenever the slot has no stored `aspect`. Everything not listed here keeps
 // the single shape its layout dictates.
+const TESTIMONIAL_ASPECTS = [
+  [0.8333, 'Portrait (5:6) — default'],
+  [0.75, 'Portrait (3:4)'],
+  [0.5625, 'Tall portrait (9:16)'],
+  [1, 'Square (1:1)'],
+  [1.3333, 'Landscape (4:3)'],
+  [1.7778, 'Wide (16:9)'],
+];
+
 const SECTION_ASPECTS = {
-  'homepage.testimonials': [
-    [0.8333, 'Portrait (5:6) — default'],
-    [0.75, 'Portrait (3:4)'],
-    [0.5625, 'Tall portrait (9:16)'],
-    [1, 'Square (1:1)'],
-    [1.3333, 'Landscape (4:3)'],
-    [1.7778, 'Wide (16:9)'],
-  ],
+  'homepage.testimonial-1': TESTIMONIAL_ASPECTS,
+  'homepage.testimonial-2': TESTIMONIAL_ASPECTS,
+  'homepage.testimonial-3': TESTIMONIAL_ASPECTS,
 };
 
 // The shape to draw the slot preview at and lock the crop tool to: the admin's
@@ -1058,72 +1546,88 @@ function sectionShape(page, slot, media) {
   return SECTION_SHAPES[key] || DEFAULT_SHAPE;
 }
 
+// One slot card. Shared by the standalone "Section images" panel and by each
+// website page's own Images card.
+function sectionSlotHTML(pageKey, slotKey, slotLabel) {
+  const pageSlots = (state.sections && state.sections[pageKey]) || {};
+  // A slot value is a media entry; records saved before the media model
+  // are bare URL strings, which normalizeMedia() upgrades on read.
+  const m = normalizeMedia(pageSlots[slotKey]);
+  const [ratio, shapeLabel] = sectionShape(pageKey, slotKey, m);
+  const aspectOptions = SECTION_ASPECTS[`${pageKey}.${slotKey}`];
+  const preview = m
+    ? mediaThumbHTML(m, 'slot__media')
+    : '<span class="slot__empty">Not set</span>';
+  // A slot as wide as a banner is unreadable squeezed into one grid
+  // column, and the point of the preview is to show the real proportion.
+  const wide = ratio >= 2 ? ' slot--wide' : '';
+  // The preview is the natural thing to click to change the framing.
+  const previewTag = m && m.type === 'image'
+    ? `<button type="button" class="slot__preview slot__preview--live" style="aspect-ratio:${ratio};"
+         data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}"
+         title="Adjust how this photo sits in the slot">${preview}<span class="slot__preview-hint">Adjust framing</span></button>`
+    : `<div class="slot__preview" style="aspect-ratio:${ratio};">${preview}</div>`;
+  return `
+    <div class="slot${wide}">
+      ${previewTag}
+      <div class="slot__body">
+        <p class="slot__name">${slotLabel}</p>
+        ${aspectOptions ? `
+          <label class="slot__shape-pick">
+            <span class="sr-only">Shape for ${slotLabel}</span>
+            <select data-aspect-select data-page="${pageKey}" data-slot="${slotKey}" ${m ? '' : 'disabled'}>
+              ${aspectOptions.map(([r, label]) =>
+                `<option value="${r}" ${Math.abs(r - ratio) < 0.005 ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
+          </label>
+          ${m ? '' : '<p class="slot__meta">Upload a photo to choose its shape.</p>'}
+        ` : `<p class="slot__shape">${shapeLabel}</p>`}
+        <p class="slot__meta">${m ? `${m.type === 'video' ? 'Video' : 'Photo'} · ${m.fit === 'contain' ? 'Whole image shown' : 'Fills the slot'}` : 'Empty'}</p>
+      </div>
+      <div class="slot__actions">
+        ${m && m.type === 'image'
+          ? `<button class="btn btn--gold btn--sm btn--block" data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}">Edit photo</button>`
+          : ''}
+        ${m && m.type === 'video'
+          ? `<button class="btn btn--gold btn--sm btn--block" data-action="fit-section" data-page="${pageKey}" data-slot="${slotKey}">${m.fit === 'contain' ? 'Fill the slot' : 'Show whole video'}</button>`
+          : ''}
+        <div class="slot__actions-row">
+          <button class="btn btn--ghost btn--sm" data-action="replace-section" data-page="${pageKey}" data-slot="${slotKey}">Upload</button>
+          <button class="btn btn--ghost btn--sm" data-action="pick-section" data-page="${pageKey}" data-slot="${slotKey}">Library</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// All the slots of one page, optionally narrowed to a named subset (the
+// Corporates entry shows only the corporate slots of the workshops page).
+function sectionSlotsHTML(pageKey, only) {
+  const labels = SECTION_LABELS[pageKey];
+  if (!labels) return '';
+  return Object.entries(labels)
+    .filter(([k]) => !k.startsWith('_'))
+    .filter(([k]) => !only || only.includes(k))
+    .map(([slotKey, slotLabel]) => sectionSlotHTML(pageKey, slotKey, slotLabel))
+    .join('');
+}
+
 function renderSections() {
   const container = $('#sections-list');
+  if (!container) return;
   container.innerHTML = '';
   Object.entries(SECTION_LABELS).forEach(([pageKey, labels]) => {
-    const pageSlots = state.sections[pageKey] || {};
     const group = document.createElement('div');
     group.className = 'section-group';
-    const slotsHtml = Object.entries(labels)
-      .filter(([k]) => !k.startsWith('_'))
-      .map(([slotKey, slotLabel]) => {
-        // A slot value is a media entry; records saved before the media model
-        // are bare URL strings, which normalizeMedia() upgrades on read.
-        const m = normalizeMedia(pageSlots[slotKey]);
-        const [ratio, shapeLabel] = sectionShape(pageKey, slotKey, m);
-        const aspectOptions = SECTION_ASPECTS[`${pageKey}.${slotKey}`];
-        const preview = m
-          ? mediaThumbHTML(m, 'slot__media')
-          : '<span class="slot__empty">Not set</span>';
-        // A slot as wide as a banner is unreadable squeezed into one grid
-        // column, and the point of the preview is to show the real proportion.
-        const wide = ratio >= 2 ? ' slot--wide' : '';
-        // The preview is the natural thing to click to change the framing.
-        const previewTag = m && m.type === 'image'
-          ? `<button type="button" class="slot__preview slot__preview--live" style="aspect-ratio:${ratio};"
-               data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}"
-               title="Adjust how this photo sits in the slot">${preview}<span class="slot__preview-hint">Adjust framing</span></button>`
-          : `<div class="slot__preview" style="aspect-ratio:${ratio};">${preview}</div>`;
-        return `
-          <div class="slot${wide}">
-            ${previewTag}
-            <div class="slot__body">
-              <p class="slot__name">${slotLabel}</p>
-              ${aspectOptions ? `
-                <label class="slot__shape-pick">
-                  <span class="sr-only">Shape for ${slotLabel}</span>
-                  <select data-aspect-select data-page="${pageKey}" data-slot="${slotKey}" ${m ? '' : 'disabled'}>
-                    ${aspectOptions.map(([r, label]) =>
-                      `<option value="${r}" ${Math.abs(r - ratio) < 0.005 ? 'selected' : ''}>${label}</option>`).join('')}
-                  </select>
-                </label>
-                ${m ? '' : '<p class="slot__meta">Upload a photo to choose its shape.</p>'}
-              ` : `<p class="slot__shape">${shapeLabel}</p>`}
-              <p class="slot__meta">${m ? `${m.type === 'video' ? 'Video' : 'Photo'} · ${m.fit === 'contain' ? 'Whole image shown' : 'Fills the slot'}` : 'Empty'}</p>
-            </div>
-            <div class="slot__actions">
-              ${m && m.type === 'image'
-                ? `<button class="btn btn--gold btn--sm btn--block" data-action="frame-section" data-page="${pageKey}" data-slot="${slotKey}">Edit photo</button>`
-                : ''}
-              ${m && m.type === 'video'
-                ? `<button class="btn btn--gold btn--sm btn--block" data-action="fit-section" data-page="${pageKey}" data-slot="${slotKey}">${m.fit === 'contain' ? 'Fill the slot' : 'Show whole video'}</button>`
-                : ''}
-              <div class="slot__actions-row">
-                <button class="btn btn--ghost btn--sm" data-action="replace-section" data-page="${pageKey}" data-slot="${slotKey}">Upload</button>
-                <button class="btn btn--ghost btn--sm" data-action="pick-section" data-page="${pageKey}" data-slot="${slotKey}">Library</button>
-              </div>
-            </div>
-          </div>
-        `;
-      }).join('');
     group.innerHTML = `
       <h3 class="section-group__title">${labels._title}</h3>
       <p class="section-group__subtitle">${labels._file || `${pageKey}.html`}</p>
-      <div class="section-slots">${slotsHtml}</div>
+      <div class="section-slots">${sectionSlotsHTML(pageKey)}</div>
     `;
     container.appendChild(group);
   });
+  // The page tabs show the same slots, so they have to redraw too.
+  if (state.tab === 'pages') renderPage();
 }
 
 // Save a slot. Fields omitted from `patch` keep their stored value, so framing

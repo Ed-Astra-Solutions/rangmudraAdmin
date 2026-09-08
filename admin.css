@@ -1083,3 +1083,92 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ================================================================
+   Website page design + Shipping (added with the admin nav regroup)
+   ================================================================ */
+
+/* Sidebar group headings — "Website page design" / "Admin features". */
+.admin-nav__group {
+  margin: 20px 0 6px;
+  padding: 0 16px;
+  font-family: var(--font-archivo);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--sc-l4x);
+}
+.admin-nav__group:first-child { margin-top: 0; }
+
+/* On the stacked mobile sidebar the group heading needs its own row so the
+   tabs after it don't wrap up alongside the label. */
+@media (max-width: 800px) {
+  .admin-nav__group { flex-basis: 100%; margin: 12px 0 4px; padding: 0; }
+}
+
+/* A card on a page-design panel: text fields, image slots, or a link out. */
+.page-card {
+  background: var(--w1);
+  border: 1px solid rgba(44, 26, 16, 0.12);
+  border-radius: 16px;
+  padding: 28px;
+  margin-bottom: 28px;
+}
+.page-card__head { margin-bottom: 20px; }
+.page-card__title {
+  font-family: var(--font-italiana);
+  font-size: 24px;
+  line-height: 32px;
+  color: var(--sc-100);
+}
+.page-card__hint {
+  margin-top: 6px;
+  font-family: var(--font-archivo);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--sc-l3);
+  max-width: 72ch;
+}
+.page-card--link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+/* Two columns of copy fields on a wide screen — headings and body paragraphs
+   are short enough that one long column just means more scrolling. */
+.page-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px 28px;
+  align-items: start;
+}
+.page-fields .form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.field-row--wrap { flex-wrap: wrap; }
+
+/* Shipping quote tester. */
+.ship-quote {
+  width: 100%;
+  max-width: 520px;
+  border-collapse: collapse;
+  font-family: var(--font-archivo);
+  font-size: 14px;
+}
+.ship-quote th,
+.ship-quote td {
+  padding: 10px 0;
+  text-align: left;
+  border-bottom: 1px solid rgba(44, 26, 16, 0.1);
+}
+.ship-quote th { color: var(--sc-l3); font-weight: 400; }
+.ship-quote td { color: var(--sc-100); text-align: right; }
+.ship-quote__total th,
+.ship-quote__total td { font-size: 16px; border-bottom: none; }

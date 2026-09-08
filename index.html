@@ -41,14 +41,27 @@
         <span class="brand-tag">Admin</span>
       </div>
       <nav class="admin-nav" role="tablist" aria-label="Admin sections">
-        <button class="admin-tab" role="tab" data-tab="products" aria-selected="true">Products</button>
+        <!-- Group 1 — the public site, listed in the same order as the site's
+             own navigation so a missing page is obvious against the live menu. -->
+        <p class="admin-nav__group">Website page design</p>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="homepage" aria-selected="true">Home</button>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="shop" aria-selected="false">Shop</button>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="workshops" aria-selected="false">Workshops</button>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="corporates" aria-selected="false">Corporates</button>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="gallery" aria-selected="false">Gallery</button>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="blogs" aria-selected="false">Blogs</button>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="about" aria-selected="false">About Us</button>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="enquire" aria-selected="false">Enquire</button>
+        <button class="admin-tab" role="tab" data-tab="pages" data-page="footer" aria-selected="false">Footer</button>
+        <button class="admin-tab" role="tab" data-tab="sections" aria-selected="false">All images</button>
+
+        <!-- Group 2 — running the business. -->
+        <p class="admin-nav__group">Admin features</p>
+        <button class="admin-tab" role="tab" data-tab="products" aria-selected="false">Products</button>
         <button class="admin-tab" role="tab" data-tab="orders" aria-selected="false">Orders</button>
-        <button class="admin-tab" role="tab" data-tab="enquiries" aria-selected="false">Enquiries</button>
-        <button class="admin-tab" role="tab" data-tab="workshops" aria-selected="false">Workshops</button>
-        <button class="admin-tab" role="tab" data-tab="blogs" aria-selected="false">Blogs</button>
-        <button class="admin-tab" role="tab" data-tab="sections" aria-selected="false">Section Images</button>
-        <button class="admin-tab" role="tab" data-tab="gallery" aria-selected="false">Gallery</button>
         <button class="admin-tab" role="tab" data-tab="discounts" aria-selected="false">Discounts</button>
+        <button class="admin-tab" role="tab" data-tab="shipping" aria-selected="false">Shipping</button>
+        <button class="admin-tab" role="tab" data-tab="enquiries" aria-selected="false">Enquiries</button>
         <button class="admin-tab" role="tab" data-tab="admins" aria-selected="false">Admins</button>
       </nav>
       <div class="admin-sidebar__footer">
@@ -60,8 +73,35 @@
 
     <main class="admin-main">
 
+      <!-- ============== PAGES (website page design) ==============
+           One panel serving every entry in the "Website page design" group.
+           The clicked tab sets data-page and renderPage() fills in that page's
+           editable text, its image slots, and a link to whatever records the
+           page lists (products, workshops, posts, media). -->
+      <section class="panel" data-panel="pages">
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title" id="page-title">Home</h2>
+            <p class="panel__subtitle" id="page-subtitle"></p>
+          </div>
+          <a class="btn btn--ghost" id="page-view-link" href="/" target="_blank" rel="noopener">View page ↗</a>
+        </div>
+        <div id="page-body"></div>
+      </section>
+
+      <!-- ============== SHIPPING ============== -->
+      <section class="panel" data-panel="shipping" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 class="panel__title">Shipping</h2>
+            <p class="panel__subtitle">Delivery is priced per order from the India Post Speed Post tariff — parcel weight (from package size and what is in the cart) against the distance to the customer's PIN code. Set the studio's dispatch PIN, packaging allowance and per-category weights here, then test a real PIN below.</p>
+          </div>
+        </div>
+        <div id="shipping-body"></div>
+      </section>
+
       <!-- ============== PRODUCTS ============== -->
-      <section class="panel" data-panel="products">
+      <section class="panel" data-panel="products" hidden>
         <div class="panel__head">
           <div>
             <h2 class="panel__title">Products</h2>
@@ -135,6 +175,7 @@
 
       <!-- ============== WORKSHOPS ============== -->
       <section class="panel" data-panel="workshops" hidden>
+        <button type="button" class="editor__back" data-goto-page="workshops"><span aria-hidden="true">←</span> Back to page design</button>
         <div class="panel__head">
           <div>
             <h2 class="panel__title">Workshops</h2>
@@ -153,10 +194,11 @@
 
       <!-- ============== BLOGS ============== -->
       <section class="panel" data-panel="blogs" hidden>
+        <button type="button" class="editor__back" data-goto-page="blogs"><span aria-hidden="true">←</span> Back to page design</button>
         <div class="panel__head">
           <div>
             <h2 class="panel__title">Blogs</h2>
-            <p class="panel__subtitle">Write and edit the Quick Reads / journal posts shown on the public site.</p>
+            <p class="panel__subtitle">Write and edit the blog posts shown on the public site. They also feed the Quick Reads strip on the home page.</p>
           </div>
           <button class="btn btn--primary" id="add-blog-btn">+ New blog</button>
         </div>
@@ -167,8 +209,8 @@
       <section class="panel" data-panel="sections" hidden>
         <div class="panel__head">
           <div>
-            <h2 class="panel__title">Section images</h2>
-            <p class="panel__subtitle">Replace the hero and feature images across the public site.</p>
+            <h2 class="panel__title">All images</h2>
+            <p class="panel__subtitle">Every image slot on the public site, grouped by page in the same order as the site menu — so a page that is still missing artwork is easy to spot. The same slots also appear on each page above.</p>
           </div>
         </div>
         <div id="sections-list"></div>
@@ -176,6 +218,7 @@
 
       <!-- ============== GALLERY ============== -->
       <section class="panel" data-panel="gallery" hidden>
+        <button type="button" class="editor__back" data-goto-page="gallery"><span aria-hidden="true">←</span> Back to page design</button>
         <div class="panel__head">
           <div>
             <h2 class="panel__title">Gallery</h2>
