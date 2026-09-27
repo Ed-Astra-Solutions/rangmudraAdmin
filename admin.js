@@ -20,6 +20,7 @@ const state = {
   content: null,
   shippingConfig: null,
   testimonials: null,
+  faqs: null,
   products: [],
   workshops: [],
   blogs: [],
@@ -66,7 +67,16 @@ async function api(method, path, body, isFormData = false) {
     throw new Error('Session expired');
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    // A 413 with no JSON body never reached the app: the web server in front of
+    // it (nginx) refused the upload for size before our own limit applied. Say
+    // so, rather than a bare "HTTP 413" that reads like a broken upload.
+    if (res.status === 413 && !data.error) {
+      throw new Error('This file is larger than the web server currently accepts. '
+        + 'Try a smaller or compressed file, or ask your developer to raise the server upload limit.');
+    }
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
   return data;
 }
 
@@ -185,6 +195,7 @@ async function loadAll() {
     loadContent();
     loadShipping();
     loadTestimonials();
+    loadFaqs();
   } catch (e) {
     toast(e.message, true);
   }
@@ -197,9 +208,10 @@ async function loadAll() {
 //
 //   content  — key in /api/content whose fields this page edits
 //   sections — key in SECTION_LABELS whose image slots this page owns
-//   only     — narrow the slots/fields to a subset (Corporates is a slice of
-//              the Workshops page, not a page of its own)
+//   only     — narrow the slots/fields to a subset of a page (contentOnly /
+//              sectionsOnly)
 //   records  — an existing panel this page's list content lives in
+//   patrons / faqs — show the shared patron list / the FAQ list manager
 const PAGES = {
   homepage: {
     title: 'Home', url: '/index.html', content: 'homepage', sections: 'homepage',
@@ -214,14 +226,9 @@ const PAGES = {
   workshops: {
     title: 'Workshops', url: '/workshops.html', content: 'workshops', sections: 'workshops',
     records: { tab: 'workshops', label: 'Manage workshops' },
-    subtitle: 'The workshops landing page and the three category landing pages.',
-  },
-  corporates: {
-    title: 'Corporates', url: '/workshop-category.html?cat=corporate',
-    content: 'workshops', contentOnly: ['corporate-eyebrow', 'corporate-title', 'corporate-desc'],
-    sections: 'workshops', sectionsOnly: ['category-corporate', 'category-hero-corporate'],
-    records: { tab: 'workshops', label: 'Manage workshops' },
-    subtitle: 'The Corporates entry in the site menu — the corporate workshops landing page.',
+    // The Corporate page is no longer in the site menu; it is reached from its
+    // category card here, so its copy and banner live with the other two.
+    subtitle: 'The workshops landing page and the three category pages (Experience, Corporate, Curated) opened from its category cards.',
   },
   gallery: {
     title: 'Gallery', url: '/gallery.html', content: 'gallery', sections: 'gallery',
@@ -238,6 +245,7 @@ const PAGES = {
     // The same shared list as the home page — edited in either place, shown in
     // both, so the two bands can never fall out of sync.
     patrons: true,
+    faqs: true,
     subtitle: 'Our story, sustainability, the team, the patron testimonials, and the FAQ.',
   },
   enquire: {
@@ -248,13 +256,29 @@ const PAGES = {
     title: 'Footer', url: '/index.html#footer', content: 'footer',
     subtitle: 'The footer on every page, plus the WhatsApp button and the bottom strip.',
   },
+  // The three pages linked from the footer's bottom strip.
+  privacy: {
+    title: 'Privacy Policy', url: '/privacy.html', content: 'privacy', richText: true,
+    subtitle: 'Linked from the footer on every page.',
+  },
+  terms: {
+    title: 'Terms of Service', url: '/terms.html', content: 'terms', richText: true,
+    subtitle: 'Linked from the footer on every page.',
+  },
+  'shipping-policy': {
+    title: 'Shipping Policy', url: '/shipping.html', content: 'shipping', richText: true,
+    subtitle: 'Linked from the footer on every page. Delivery prices themselves are set under Admin features → Shipping.',
+  },
 };
+
+// Shown above the page-text form on pages whose long copy is formatted.
+const RICH_TEXT_HINT = 'Formatting: start a line with <code>## </code> for a section heading and <code>- </code> for a bullet; leave a blank line between paragraphs. '
+  + 'Inside a paragraph, <code>**bold**</code>, <code>*italic*</code> and <code>[link text](https://…)</code> work, and email addresses and web links become clickable on their own.';
 
 // Friendly names for the copy fields. Anything missing falls back to the key
 // itself with dashes turned into spaces, so a new field is still editable the
 // moment it is added to content.json.
 const CONTENT_LABELS = {
-  'intro-eyebrow': 'Introduction eyebrow',
   'intro-heading': 'Introduction heading',
   'intro-body-1': 'Introduction paragraph 1',
   'intro-body-2': 'Introduction paragraph 2',
@@ -263,12 +287,6 @@ const CONTENT_LABELS = {
   'shop-promo-cta': 'Shop promo — button',
   'shop-promo-meta': 'Shop promo — caption',
   'testimonials-heading': 'Testimonials heading (one line per line break)',
-  'testimonial-1-quote': 'Testimonial 1 — quote',
-  'testimonial-1-author': 'Testimonial 1 — name',
-  'testimonial-2-quote': 'Testimonial 2 — quote',
-  'testimonial-2-author': 'Testimonial 2 — name',
-  'testimonial-3-quote': 'Testimonial 3 — quote',
-  'testimonial-3-author': 'Testimonial 3 — name',
   'gallery-heading': 'Gallery teaser — heading',
   'gallery-body': 'Gallery teaser — paragraph',
   'gallery-cta': 'Gallery teaser — button',
@@ -309,6 +327,7 @@ const CONTENT_LABELS = {
   'scroll-label': 'Scroll hint',
   'craft-eyebrow': 'Craft carousel — eyebrow',
   'craft-heading': 'Craft carousel — heading',
+  'craft-subtitle': 'Craft carousel — intro line',
   'form-eyebrow': 'Form — eyebrow',
   'form-heading': 'Form — heading',
   'form-subtitle': 'Form — paragraph',
@@ -338,6 +357,8 @@ const CONTENT_LABELS = {
   'newsletter-title': 'Newsletter heading',
   'newsletter-placeholder': 'Newsletter input placeholder',
   copyright: 'Copyright line',
+  title: 'Page title',
+  body: 'Page text',
 };
 
 function contentLabel(key) {
@@ -348,6 +369,14 @@ function contentLabel(key) {
 // where a heading stops being a heading.
 function isLongCopy(value) {
   return String(value || '').length > 60 || String(value || '').includes('\n');
+}
+
+// A paragraph gets a few rows; a whole policy page gets room to be read.
+function textareaRows(value) {
+  const text = String(value || '');
+  const lines = text.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 90)), 0);
+  const cap = text.length > 1500 ? 28 : 8;
+  return Math.min(cap, Math.max(3, lines));
 }
 
 async function loadContent() {
@@ -379,17 +408,20 @@ function renderPage() {
       <div class="page-card__head">
         <h3 class="page-card__title">Text &amp; headings</h3>
         <p class="page-card__hint">Edit any wording on this page. Changes go live as soon as you save — no redeploy.</p>
+        ${cfg.richText ? `<p class="page-card__hint">${RICH_TEXT_HINT}</p>` : ''}
       </div>
       ${keys.length ? `
       <form id="page-content-form" class="page-fields" autocomplete="off">
         ${keys.map((k) => {
           const v = fields[k] ?? '';
           const id = `content-${cfg.content}-${k}`;
+          // A whole document (the policy pages) gets the full width to read in.
+          const wide = String(v).length > 1500 ? ' field--wide' : '';
           return `
-            <label class="field">
+            <label class="field${wide}">
               <span class="field__label">${escapeHtml(contentLabel(k))}</span>
               ${isLongCopy(v)
-                ? `<textarea id="${id}" name="${escapeHtml(k)}" rows="${Math.min(8, Math.max(3, Math.ceil(String(v).length / 70)))}">${escapeHtml(v)}</textarea>`
+                ? `<textarea id="${id}" name="${escapeHtml(k)}" rows="${textareaRows(v)}">${escapeHtml(v)}</textarea>`
                 : `<input type="text" id="${id}" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`}
             </label>`;
         }).join('')}
@@ -420,10 +452,12 @@ function renderPage() {
     </div>` : '';
 
   const patronsCard = cfg.patrons ? testimonialsCardHTML() : '';
+  const faqsCard = cfg.faqs ? faqsCardHTML() : '';
 
-  body.innerHTML = textCard + patronsCard + imagesCard + recordsCard;
+  body.innerHTML = textCard + patronsCard + faqsCard + imagesCard + recordsCard;
 
   if (cfg.patrons) wirePatronCard(body);
+  if (cfg.faqs) wireFaqCard(body);
 
   const form = $('#page-content-form');
   if (form) {
@@ -447,6 +481,121 @@ function renderPage() {
 
   body.querySelectorAll('[data-goto-tab]').forEach((btn) => {
     btn.addEventListener('click', () => showTab(btn.dataset.gotoTab));
+  });
+}
+
+// ---------- FAQ (About page) ----------
+//
+// The About page's question list. Same pattern as the patron list below: one
+// row per entry with reorder / edit / delete, and a modal editor.
+
+async function loadFaqs() {
+  state.faqs = await api('GET', '/api/admin/faqs');
+  if (state.tab === 'pages') renderPage();
+}
+
+function faqsCardHTML() {
+  const list = state.faqs;
+  if (!list) return '<div class="page-card"><p class="slot__meta">Loading questions…</p></div>';
+  const rows = list.length ? list.map((f, i) => `
+      <div class="patron-row${f.published === false ? ' patron-row--hidden' : ''}">
+        <div class="patron-row__body">
+          <p class="patron-row__quote"><strong>${escapeHtml(f.question || '')}</strong></p>
+          <p class="patron-row__meta">${escapeHtml(String(f.answer || '').slice(0, 200))}${String(f.answer || '').length > 200 ? '…' : ''}${f.published === false ? ' · <strong>hidden</strong>' : ''}</p>
+        </div>
+        <div class="patron-row__actions">
+          <div class="patron-row__move">
+            <button class="btn btn--ghost btn--sm" data-faq-move="up" data-id="${escapeAttr(f.id)}" ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
+            <button class="btn btn--ghost btn--sm" data-faq-move="down" data-id="${escapeAttr(f.id)}" ${i === list.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
+          </div>
+          <button class="btn btn--ghost btn--sm" data-faq-edit="${escapeAttr(f.id)}">Edit</button>
+          <button class="btn btn--danger btn--sm" data-faq-delete="${escapeAttr(f.id)}">Delete</button>
+        </div>
+      </div>`).join('') : '<p class="slot__meta">No questions yet. Add the first one.</p>';
+
+  return `
+    <div class="page-card">
+      <div class="page-card__head page-card__head--row">
+        <div>
+          <h3 class="page-card__title">Frequently asked questions</h3>
+          <p class="page-card__hint">The FAQ at the bottom of About Us, in this order. Hide a question to take it off the site without deleting it. The section heading is under Text &amp; headings above.</p>
+        </div>
+        <button class="btn btn--primary" data-faq-new>+ Add question</button>
+      </div>
+      <div class="patron-list">${rows}</div>
+    </div>`;
+}
+
+function wireFaqCard(root) {
+  root.querySelector('[data-faq-new]')?.addEventListener('click', () => openFaqEditor(null));
+  root.querySelectorAll('[data-faq-edit]').forEach((b) => b.addEventListener('click', () =>
+    openFaqEditor(state.faqs.find((f) => f.id === b.dataset.faqEdit))));
+  root.querySelectorAll('[data-faq-delete]').forEach((b) => b.addEventListener('click', async () => {
+    const f = state.faqs.find((x) => x.id === b.dataset.faqDelete);
+    if (!confirm(`Delete the question "${f?.question || ''}"?`)) return;
+    try {
+      await api('DELETE', `/api/admin/faqs/${encodeURIComponent(b.dataset.faqDelete)}`);
+      toast('Question deleted');
+      await loadFaqs();
+    } catch (e) { toast(e.message, true); }
+  }));
+  root.querySelectorAll('[data-faq-move]').forEach((b) => b.addEventListener('click', async () => {
+    const ids = state.faqs.map((f) => f.id);
+    const i = ids.indexOf(b.dataset.id);
+    const j = b.dataset.faqMove === 'up' ? i - 1 : i + 1;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    try {
+      await api('PUT', '/api/admin/faqs-order', { ids });
+      await loadFaqs();
+    } catch (e) { toast(e.message, true); }
+  }));
+}
+
+function openFaqEditor(faq) {
+  const isEdit = !!faq;
+  const f = faq || { question: '', answer: '', published: true };
+  openEditor(isEdit ? 'Edit question' : 'Add question', `
+    <form id="faq-form" class="form-grid" autocomplete="off">
+      <label class="field">
+        <span class="field__label">Question</span>
+        <input name="question" required maxlength="300" value="${escapeAttr(f.question || '')}" placeholder="e.g. Do I need any prior experience?">
+      </label>
+      <label class="field">
+        <span class="field__label">Answer</span>
+        <textarea name="answer" required rows="6" maxlength="3000">${escapeHtml(f.answer || '')}</textarea>
+      </label>
+      <div class="checkbox-row">
+        <input type="checkbox" id="faq-published" name="published" ${f.published === false ? '' : 'checked'}>
+        <label for="faq-published">Show on the site</label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn--primary">${isEdit ? 'Save changes' : 'Add question'}</button>
+      </div>
+    </form>
+  `);
+
+  $('#faq-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const payload = {
+      question: fd.get('question'),
+      answer: fd.get('answer'),
+      published: fd.get('published') === 'on',
+    };
+    try {
+      if (isEdit) {
+        await api('PUT', `/api/admin/faqs/${encodeURIComponent(f.id)}`, payload);
+        toast('Question updated');
+      } else {
+        await api('POST', '/api/admin/faqs', payload);
+        toast('Question added');
+      }
+      closeEditor({ force: true });
+      await loadFaqs();
+    } catch (err) {
+      toast(err.message, true);
+    }
   });
 }
 
@@ -1352,7 +1501,7 @@ function contentToText(content) {
   return (content || []).map((block) => {
     if (block.type === 'h') return `## ${block.text}`;
     if (block.type === 'ul') return (block.items || []).map((i) => `- ${i}`).join('\n');
-    if (block.type === 'img') {
+    if (block.type === 'img' || block.type === 'video') {
       const label = [block.alt, block.caption].filter(Boolean).join(' | ');
       return `![${label}](${block.src || ''})`;
     }
@@ -1375,7 +1524,8 @@ function textToContent(text) {
       flushList();
       const [, label, src] = imgMatch;
       const [alt, caption] = label.split('|').map((s) => s.trim());
-      const img = { type: 'img', src: src.trim() };
+      // Same line syntax for both — a video file's extension makes it a video.
+      const img = { type: VIDEO_URL_RE.test(src.trim()) ? 'video' : 'img', src: src.trim() };
       if (alt) img.alt = alt;
       if (caption) img.caption = caption;
       if (img.src) blocks.push(img);
@@ -1486,9 +1636,17 @@ function openBlogModal(blog) {
       </label>
       <label class="field">
         <span class="field__label">Content</span>
-        <p class="field__hint">One block per blank-line-separated chunk. Start a line with <code>## </code> for a heading or <code>- </code> for a bullet; everything else is a paragraph. Images sit on their own line as <code>![alt | caption](url)</code>.</p>
+        <p class="field__hint">This box uses a few simple Markdown-style marks — that is what the special characters are:</p>
+        <ul class="field__hint blog-format-help">
+          <li>Leave a blank line between paragraphs.</li>
+          <li><code>## Heading</code> — a line starting with <code>## </code> becomes a section heading.</li>
+          <li><code>- item</code> — lines starting with <code>- </code> become a bullet list.</li>
+          <li><code>**bold**</code>, <code>*italic*</code> and <code>[link text](https://…)</code> work inside a paragraph or bullet.</li>
+          <li><code>![alt | caption](url)</code> on its own line places a photo or video. Use the buttons below rather than typing it.</li>
+        </ul>
         <div class="upload__btns" style="margin-bottom:8px;">
           <button type="button" class="btn btn--ghost btn--sm" data-insert-image>+ Insert image</button>
+          <button type="button" class="btn btn--ghost btn--sm" data-insert-video>+ Insert video</button>
         </div>
         <textarea name="content" id="blog-content" rows="14" style="min-height:240px;">${escapeHtml(contentToText(b.content))}</textarea>
       </label>
@@ -1517,6 +1675,27 @@ function openBlogModal(blog) {
         const url = await uploadFile(file);
         insertContentBlock(`![ | ](${url})`);
         toast('Image inserted — add alt text and an optional caption');
+      } catch (err) { toast(err.message, true); }
+    };
+    input.click();
+  });
+
+  // Videos go through the same upload path as every other file (direct to
+  // storage, with progress), then drop in as a block like an image does.
+  $('[data-insert-video]')?.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'video/*';
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      try {
+        const { items: [m], errors } = await uploadFiles([file], (done, total, f, frac) => {
+          toast(`Uploading ${f.name}…${frac ? ` ${Math.round(frac * 100)}%` : ''}`);
+        });
+        if (!m) throw new Error(errors[0].message);
+        insertContentBlock(`![ | ](${m.url})`);
+        toast('Video inserted — add a caption if you like');
       } catch (err) { toast(err.message, true); }
     };
     input.click();
@@ -1582,8 +1761,9 @@ async function confirmDeleteBlog(id) {
 // ---------- Sections ----------
 
 // Ordered to match the public site's navigation — Home, Shop, Workshops,
-// Corporates, Gallery, Blogs, About Us, Enquire — so a missing section is easy
-// to spot against the live menu.
+// Gallery, Blogs, About Us, Enquire — so a missing section is easy to spot
+// against the live menu. Patron photos are not slots: each patron carries their
+// own, edited under Home → Patron testimonials.
 const SECTION_LABELS = {
   homepage: {
     _title: 'Home',
@@ -1592,9 +1772,6 @@ const SECTION_LABELS = {
     introduction: 'Introduction still-life',
     'workshops-promo': 'Workshops promo banner',
     'shop-promo': 'Shop promo banner',
-    'testimonial-1': 'Patron testimonial 1 — photo/video',
-    'testimonial-2': 'Patron testimonial 2 — photo/video',
-    'testimonial-3': 'Patron testimonial 3 — photo/video',
     gallery: 'Gallery teaser photo',
   },
   shop: {
@@ -1634,6 +1811,7 @@ const SECTION_LABELS = {
     sustainability: 'Sustainability',
     'team-hero': 'Our Team — primary',
     'team-secondary': 'Our Team — secondary',
+    'team-video': 'Our Team — video (the PLAY NOW button)',
     'faq-decor': 'FAQ decorative',
   },
   enquire: {
@@ -1646,38 +1824,42 @@ const SECTION_LABELS = {
   },
 };
 
+// Width ÷ height of each slot as the public page draws it on a 1440px desktop
+// screen, measured from the live layout. The crop tool locks to this, so it
+// must match the page: when it didn't (banners cropped at 3:1 or 16:9 but shown
+// at 4:1), the framing chosen here was not the framing visitors saw. The
+// 360px-tall page banners widen a little on bigger screens and turn nearly
+// square on phones, so frame the subject near the centre of those.
 const SECTION_SHAPES = {
-  'homepage.hero': [1.7778, 'Full-bleed hero (16:9)'],
-  'homepage.introduction': [0.87, 'Still-life column (~7:8)'],
-  'homepage.workshops-promo': [1.7778, 'Promo banner (16:9)'],
-  'homepage.shop-promo': [1.7778, 'Promo banner (16:9)'],
-  'homepage.testimonial-1': [0.8333, 'Portrait panel (5:6)'],
-  'homepage.testimonial-2': [0.8333, 'Portrait panel (5:6)'],
-  'homepage.testimonial-3': [0.8333, 'Portrait panel (5:6)'],
-  'homepage.gallery': [2.4, 'Full-bleed strip (12:5)'],
-  'about.hero': [3.2, 'Hero band (16:5)'],
-  'about.story': [0.8, 'Story image (4:5)'],
-  'about.sustainability': [1.3333, 'Sustainability image (4:3)'],
-  'about.team-hero': [1.7778, 'Team primary (16:9)'],
-  'about.team-secondary': [1.3333, 'Team secondary (4:3)'],
-  'about.faq-decor': [0.75, 'FAQ decoration (3:4)'],
-  'workshops.hero': [1.7778, 'Hero band (16:9)'],
+  'homepage.hero': [1.6, 'Full-screen hero (16:10)'],
+  'homepage.introduction': [0.92, 'Still-life column (~11:12)'],
+  'homepage.workshops-promo': [2.4, 'Promo banner (12:5)'],
+  'homepage.shop-promo': [2.4, 'Promo banner (12:5)'],
+  'homepage.gallery': [2, 'Gallery teaser (2:1)'],
+  'about.hero': [4, 'Page banner (4:1)'],
+  'about.story': [0.92, 'Story image (~11:12)'],
+  'about.sustainability': [0.92, 'Sustainability image (~11:12)'],
+  'about.team-hero': [2.1, 'Team primary (~21:10)'],
+  'about.team-secondary': [1.38, 'Team secondary (~11:8)'],
+  'about.team-video': [1.7778, 'Team video (16:9)'],
+  'about.faq-decor': [1.1, 'FAQ decoration (~11:10)'],
+  'workshops.hero': [4, 'Page banner (4:1)'],
   'workshops.category-experience': [0.8, 'Category card (4:5)'],
   'workshops.category-corporate': [0.8, 'Category card (4:5)'],
   'workshops.category-curated': [0.8, 'Category card (4:5)'],
-  'workshops.category-hero-experience': [4.5, 'Page banner (9:2)'],
-  'workshops.category-hero-corporate': [4.5, 'Page banner (9:2)'],
-  'workshops.category-hero-curated': [4.5, 'Page banner (9:2)'],
-  'shop.hero': [2.4, 'Shop hero (12:5)'],
+  'workshops.category-hero-experience': [4, 'Page banner (4:1)'],
+  'workshops.category-hero-corporate': [4, 'Page banner (4:1)'],
+  'workshops.category-hero-curated': [4, 'Page banner (4:1)'],
+  'shop.hero': [4, 'Page banner (4:1)'],
   'shop.process-1': [0.714, 'Process card (5:7)'],
   'shop.process-2': [0.714, 'Process card (5:7)'],
   'shop.process-3': [0.714, 'Process card (5:7)'],
-  'enquire.hero': [2.4, 'Enquire hero (12:5)'],
-  'enquire.carousel-1': [1.7778, 'Carousel slide (16:9)'],
-  'enquire.carousel-2': [1.7778, 'Carousel slide (16:9)'],
-  'enquire.carousel-3': [1.7778, 'Carousel slide (16:9)'],
-  'blogs.hero': [3, 'Page banner (3:1)'],
-  'gallery.hero': [3, 'Page banner (3:1)'],
+  'enquire.hero': [2.5, 'Enquire hero (5:2)'],
+  'enquire.carousel-1': [2.28, 'Carousel slide (~16:7)'],
+  'enquire.carousel-2': [2.28, 'Carousel slide (~16:7)'],
+  'enquire.carousel-3': [2.28, 'Carousel slide (~16:7)'],
+  'blogs.hero': [4, 'Page banner (4:1)'],
+  'gallery.hero': [4, 'Page banner (4:1)'],
 };
 
 const DEFAULT_SHAPE = [1.6, 'Section band (16:10)'];
@@ -1685,21 +1867,9 @@ const DEFAULT_SHAPE = [1.6, 'Section band (16:10)'];
 // Slots whose shape is not fixed by the layout: the admin picks one and the
 // public page renders that box. The first entry is the site's default, used
 // whenever the slot has no stored `aspect`. Everything not listed here keeps
-// the single shape its layout dictates.
-const TESTIMONIAL_ASPECTS = [
-  [0.8333, 'Portrait (5:6) — default'],
-  [0.75, 'Portrait (3:4)'],
-  [0.5625, 'Tall portrait (9:16)'],
-  [1, 'Square (1:1)'],
-  [1.3333, 'Landscape (4:3)'],
-  [1.7778, 'Wide (16:9)'],
-];
-
-const SECTION_ASPECTS = {
-  'homepage.testimonial-1': TESTIMONIAL_ASPECTS,
-  'homepage.testimonial-2': TESTIMONIAL_ASPECTS,
-  'homepage.testimonial-3': TESTIMONIAL_ASPECTS,
-};
+// the single shape its layout dictates. (The homepage testimonial slots that
+// used this have been retired — patrons carry their own media now.)
+const SECTION_ASPECTS = {};
 
 // The shape to draw the slot preview at and lock the crop tool to: the admin's
 // stored choice where the slot allows one, otherwise the layout's fixed shape.
@@ -1829,7 +1999,7 @@ $('#sections-list').addEventListener('click', async (e) => {
       // A new asset starts centred and filling the frame; re-frame it after.
       openGalleryPicker({ onSelect: async (item) => {
         try {
-          await saveSection(page, slot, { url: item.url, type: item.type, fit: 'cover', position: '50% 50%' });
+          await saveSection(page, slot, { url: item.url, type: item.type, fit: 'cover', position: '50% 50%', edit: null });
         } catch (err) { toast(err.message, true); }
       } });
       return;
@@ -1844,7 +2014,7 @@ $('#sections-list').addEventListener('click', async (e) => {
         try {
           const { items: [m], errors } = await uploadFiles([file]);
           if (!m) throw new Error(errors[0].message);
-          await saveSection(page, slot, { url: m.url, type: m.type, fit: 'cover', position: '50% 50%' });
+          await saveSection(page, slot, { url: m.url, type: m.type, fit: 'cover', position: '50% 50%', edit: null });
         } catch (err) { toast(err.message, true); }
       };
       input.click();
@@ -1897,6 +2067,8 @@ function normalizeMedia(raw) {
     position: o.position || '50% 50%',
     // Only set on slots that offer a choice of shapes (see SECTION_ASPECTS).
     aspect: Number(o.aspect) > 0 ? Number(o.aspect) : null,
+    // The photo editor's memory — see openFrameModal. Absent on most entries.
+    ...(o.edit && typeof o.edit === 'object' ? { edit: o.edit } : {}),
   };
 }
 
@@ -1989,6 +2161,7 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
           <button type="button" class="btn btn--ghost btn--sm" data-media-up ${i === 0 ? 'disabled' : ''} aria-label="Move up">↑</button>
           <button type="button" class="btn btn--ghost btn--sm" data-media-down ${i === items.length - 1 ? 'disabled' : ''} aria-label="Move down">↓</button>
           ${m.type === 'image' ? '<button type="button" class="btn btn--gold btn--sm" data-media-frame>Edit photo</button>' : ''}
+          ${m.type === 'video' ? `<button type="button" class="btn btn--gold btn--sm" data-media-fit>${m.fit === 'contain' ? 'Fill the frame' : 'Show whole video'}</button>` : ''}
           <button type="button" class="btn btn--danger btn--sm" data-media-remove>Remove</button>
         </div>
       </div>
@@ -2032,6 +2205,11 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
       touched();
     } else if (e.target.closest('[data-media-frame]')) {
       openFrameModal(items[i], (updated) => { items[i] = updated; touched(); });
+    } else if (e.target.closest('[data-media-fit]')) {
+      // Videos can't go through the crop tool, so they get the same fill /
+      // show-whole toggle the section slots offer.
+      items[i] = { ...items[i], fit: items[i].fit === 'contain' ? 'cover' : 'contain' };
+      touched();
     }
   });
 
@@ -2043,7 +2221,9 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
 // Values are width ÷ height. 'free' unlocks the box entirely.
 const FRAME_ASPECTS = [
   ['0.8', 'Product / workshop card (4:5)'],
+  ['0.75', 'Portrait (3:4)'],
   ['1', 'Square (1:1)'],
+  ['1.3333', 'Landscape (4:3)'],
   ['1.6', 'Section band (16:10)'],
   ['1.7778', 'Wide banner (16:9)'],
   ['3.2', 'Hero strip (16:5)'],
@@ -2169,6 +2349,15 @@ function supportsCanvasFilter() {
 
 function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockAspect = false } = {}) {
   const m = normalizeMedia(media);
+  // What the editor remembers about this photo (see normalizeMediaEdit on the
+  // server): the crop shape chosen last time and, for an edited copy, the
+  // untouched original plus the crop and adjustments that made the copy.
+  // Re-opening an edited copy starts from that original with everything as it
+  // was left, instead of from the already-cropped pixels at the defaults.
+  const remembered = m.edit || {};
+  if (!lockAspect && remembered.shape
+    && FRAME_ASPECTS.some(([v]) => v === remembered.shape)) aspect = remembered.shape;
+  let sourceMode = !!remembered.source && remembered.source !== m.url;
   const filtersUsable = supportsCanvasFilter();
   // Both save routes re-encode in the original's format (see renderCrop).
   const outMime = outputMimeFor(m.url);
@@ -2490,8 +2679,9 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
     const max = maxBox();
     zoomed = !contain && (g.boxW < max.w - 1 || g.boxH < max.h - 1);
     // Framing is only available while nothing about the pixels has changed and
-    // the box still surrounds everything CSS would show.
-    const destructive = edited() || zoomed;
+    // the box still surrounds everything CSS would show. Working from an edited
+    // copy's original is always a re-render: the stored file is the copy.
+    const destructive = edited() || zoomed || sourceMode;
     saveBtn.textContent = destructive ? 'Save a copy' : 'Save framing';
     saveBtn.disabled = destructive && !croppable;
     saveBtn.title = saveBtn.disabled
@@ -2507,6 +2697,9 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
           + 'using this image shows the edit.';
     $('#frame-hint').textContent = contain
       ? 'The whole photo will be shown, with empty space around it. Nothing to position.'
+      : sourceMode
+        ? 'Editing from the original photo, with the crop and adjustments you saved last time. '
+          + 'Save a copy to keep the original, or replace this photo everywhere it is used.'
       : destructive
         ? croppable
           ? 'Saving re-renders the pixels: a copy leaves the original alone, replacing overwrites it everywhere.'
@@ -2560,10 +2753,52 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
     paint();
   };
 
+  // Put the editor back the way it was left when this copy was saved.
+  const restoreRemembered = () => {
+    Object.assign(ed, {
+      quarters: remembered.quarters || 0,
+      straighten: remembered.straighten || 0,
+      flipH: !!remembered.flipH,
+      flipV: !!remembered.flipV,
+      brightness: remembered.brightness ?? 1,
+      contrast: remembered.contrast ?? 1,
+      saturate: remembered.saturate ?? 1,
+    });
+    $('#in-straighten').value = String(ed.straighten);
+    $('#out-straighten').textContent = `${ed.straighten}°`;
+    [['brightness', ed.brightness], ['contrast', ed.contrast], ['saturate', ed.saturate]].forEach(([k, v]) => {
+      $(`#in-${k}`).value = String(Math.round(v * 100));
+      $(`#out-${k}`).textContent = `${Math.round(v * 100)}%`;
+    });
+    $('#frame-tools').querySelectorAll('[data-flip]').forEach((b) => {
+      const on = b.dataset.flip === 'h' ? ed.flipH : ed.flipV;
+      b.setAttribute('aria-pressed', String(on));
+      b.classList.toggle('btn--gold', on);
+    });
+    refresh();
+    if (Array.isArray(remembered.box) && remembered.box.length === 4) {
+      const [fx, fy, fw, fh] = remembered.box;
+      g.boxX = fx * g.dispW;
+      g.boxY = fy * g.dispH;
+      g.boxW = fw * g.dispW;
+      g.boxH = fh * g.dispH;
+      clampBox();
+      paint();
+    }
+  };
+
   // Load a readable copy; fall back to a plain preview if the host blocks it.
   (async () => {
     try {
-      source = await loadCroppableImage(m.url);
+      if (sourceMode) {
+        try {
+          source = await loadCroppableImage(remembered.source);
+        } catch (_) {
+          // The original has gone (deleted from storage) — edit the copy itself.
+          sourceMode = false;
+        }
+      }
+      if (!source) source = await loadCroppableImage(m.url);
       croppable = true;
       canvas.hidden = false;
       frameObjectUrl = source.objectUrl;   // released by closeFrameLayer()
@@ -2573,10 +2808,12 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
       if (!filtersUsable) {
         $('#frame-adjust').hidden = true;
       }
-      refresh();
+      if (sourceMode) restoreRemembered();
+      else refresh();
     } catch (_) {
       // No pixel access: preview only, and every pixel-altering control goes.
       croppable = false;
+      sourceMode = false;
       img.hidden = false;
       img.src = m.url;
       $('#frame-tools').hidden = true;
@@ -2747,8 +2984,27 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
     return `${fx.toFixed(1)}% ${fy.toFixed(1)}%`;
   };
 
+  // The shape last chosen, remembered so the next edit opens on it.
+  const shapeChoice = () => (aspectSelect ? aspectSelect.value : (freeCrop ? 'free' : String(aspect)));
+
+  // Everything needed to rebuild this edit later from the untouched original.
+  const editRecord = (sourceUrl) => {
+    const cropping = fitSelect.value !== 'contain';
+    return {
+      shape: shapeChoice(),
+      source: sourceUrl,
+      box: cropping ? [g.boxX / g.dispW, g.boxY / g.dispH, g.boxW / g.dispW, g.boxH / g.dispH] : [0, 0, 1, 1],
+      ...ed,
+    };
+  };
+
   const saveFraming = () => {
-    onSave({ ...m, fit: fitSelect.value, position: fitSelect.value === 'contain' ? '50% 50%' : focalString() });
+    onSave({
+      ...m,
+      fit: fitSelect.value,
+      position: fitSelect.value === 'contain' ? '50% 50%' : focalString(),
+      edit: { shape: shapeChoice() },
+    });
     closeFrameLayer();
     toast('Framing saved');
   };
@@ -2775,7 +3031,10 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
     btn.disabled = true;
     try {
       const url = await uploadFile(await renderEdited());
-      onSave({ ...m, url, fit: 'cover', position: '50% 50%' });
+      // The copy remembers the original it was cut from — which is the
+      // remembered original again when this was itself re-edited from one.
+      onSave({ ...m, url, fit: 'cover', position: '50% 50%',
+        edit: editRecord(sourceMode ? remembered.source : m.url) });
       closeFrameLayer();
       toast('Edited copy uploaded');
     } catch (err) {
@@ -2793,7 +3052,10 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
       notePlaceReplacement(m.url, version);
       // The URL is unchanged — that is the point — so the entry keeps it and
       // only the framing is reset, the crop now being baked into the file.
-      onSave({ ...m, fit: 'cover', position: '50% 50%' });
+      // Re-rendered from a remembered original, that original is still intact
+      // and stays the starting point; otherwise the original pixels are gone.
+      onSave({ ...m, fit: 'cover', position: '50% 50%',
+        edit: sourceMode ? editRecord(remembered.source) : { shape: shapeChoice() } });
       closeFrameLayer();
       toast('Original replaced everywhere it is used');
     } catch (err) {
@@ -2803,7 +3065,7 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
   };
 
   saveBtn.addEventListener('click', (e) => {
-    if ((edited() || zoomed) && croppable) saveCopy(e.currentTarget);
+    if ((edited() || zoomed || sourceMode) && croppable) saveCopy(e.currentTarget);
     else saveFraming();
   });
   replaceBtn.addEventListener('click', (e) => saveOverOriginal(e.currentTarget));

@@ -1209,6 +1209,7 @@ body {
   gap: 20px 28px;
   align-items: start;
 }
+.page-fields .field--wide { grid-column: 1 / -1; }
 .page-fields .form-actions {
   grid-column: 1 / -1;
   display: flex;
@@ -1297,4 +1298,21 @@ body {
 @media (max-width: 700px) {
   .patron-row { flex-wrap: wrap; }
   .patron-row__actions { width: 100%; justify-content: flex-end; }
+}
+
+/* Blog editor — the formatting cheat-sheet above the content box. */
+.blog-format-help {
+  margin: 4px 0 10px;
+  padding-left: 18px;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.blog-format-help code,
+.page-card__hint code {
+  font-size: 12px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--pr-l3);
 }
