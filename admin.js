@@ -4421,9 +4421,9 @@ function openOrderModal(o) {
         <summary>Delivery address &amp; tracking</summary>
         <div class="form-grid-2">
           <label class="field"><span class="field__label">Name</span><input type="text" name="addr_name" value="${escapeAttr(addr.name || addr.title || '')}"></label>
-          <label class="field"><span class="field__label">Address / line 1</span><input type="text" name="addr_line1" value="${escapeAttr(addr.line1 || addr.address || '')}"></label>
+          <label class="field"><span class="field__label">Door no / floor / street</span><input type="text" name="addr_line1" value="${escapeAttr(addr.line1 || addr.address || '')}"></label>
         </div>
-        <label class="field"><span class="field__label">Line 2</span><input type="text" name="addr_line2" value="${escapeAttr(addr.line2 || '')}"></label>
+        <label class="field"><span class="field__label">Building / area</span><input type="text" name="addr_line2" value="${escapeAttr(addr.line2 || '')}"></label>
         <div class="form-grid-3">
           <label class="field"><span class="field__label">City</span><input type="text" name="addr_city" value="${escapeAttr(addr.city || '')}"></label>
           <label class="field"><span class="field__label">State</span><input type="text" name="addr_state" value="${escapeAttr(addr.state || '')}"></label>
