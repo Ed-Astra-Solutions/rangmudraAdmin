@@ -3420,6 +3420,8 @@ const ENQUIRY_STATUS_META = {
   new: { label: 'New', cls: 'ostatus--created' },
   contacted: { label: 'Contacted', cls: 'ostatus--shipped' },
   closed: { label: 'Closed', cls: 'ostatus--delivered' },
+  // Set by the server's spam filters; move a false positive back to New.
+  spam: { label: 'Spam', cls: 'ostatus--cancelled' },
 };
 
 function enquiryStatusBadge(status) {
@@ -3457,7 +3459,10 @@ function renderEnquiries() {
   const q = state.enquirySearch.trim().toLowerCase();
   const list = state.enquiries.filter((e) =>
     (state.enquiryTypeFilter === 'all' || e.type === state.enquiryTypeFilter)
-    && (state.enquiryStatusFilter === 'all' || (e.status || 'new') === state.enquiryStatusFilter)
+    // Spam stays out of "Any status" so it doesn't bury real leads; the Spam chip shows it.
+    && (state.enquiryStatusFilter === 'all'
+      ? (e.status || 'new') !== 'spam'
+      : (e.status || 'new') === state.enquiryStatusFilter)
     && enquiryMatches(e, q));
 
   if (!list.length) {
@@ -4305,6 +4310,36 @@ function collectOrderItems() {
   })).filter((it) => it.name);
 }
 
+// Read-only breakdown of how a storefront order was priced at checkout:
+// original price → product discount → promo → tax → delivery → charged.
+function orderPricingHtml(p) {
+  if (!p || !Array.isArray(p.lines)) return '';
+  const offLabel = (d) => (d.type === 'percent' ? `${d.value}% off` : `${money(d.value)} off`);
+  const lines = p.lines.map((l) => {
+    const qty = l.qty > 1 ? ` × ${l.qty}` : '';
+    const price = l.productDiscount
+      ? `<s>${money(l.listPrice)}</s> ${money(l.price)} <span class="opricing__note">(${escapeHtml(offLabel(l.productDiscount))})</span>`
+      : money(l.price);
+    return `<tr><td>${escapeHtml(l.name || l.id || '')}${l.size ? ` · ${escapeHtml(l.size)}` : ''}${qty}</td><td>${price}</td></tr>`;
+  }).join('');
+  const row = (label, value, cls = '') => `<tr class="${cls}"><td>${label}</td><td>${value}</td></tr>`;
+  return `
+    <details class="opricing" open>
+      <summary>Pricing at checkout</summary>
+      <table class="opricing__table">
+        <tbody>
+          ${lines}
+          ${row('Original total', money(p.listSubtotal), 'opricing__sep')}
+          ${p.productDiscount > 0 ? row('Product discounts', '−' + money(p.productDiscount)) : ''}
+          ${p.promo ? row(escapeHtml(p.promo.label), '−' + money(p.promo.amount)) : ''}
+          ${row('Tax', money(p.tax))}
+          ${row('Delivery', money(p.deliveryFee))}
+          ${row('<strong>Charged</strong>', `<strong>${money(p.amount)}</strong>`, 'opricing__sep')}
+        </tbody>
+      </table>
+    </details>`;
+}
+
 function openOrderModal(o) {
   const isEdit = !!o;
   const v = o || {};
@@ -4316,6 +4351,7 @@ function openOrderModal(o) {
   openEditor(isEdit ? `Order ${v.id}` : 'New order', `
     <form id="order-form" class="form" autocomplete="off">
       ${isEdit ? `<p class="order-modal__meta">${statusBadge(v.status)} · Created ${escapeHtml(orderDate(v.createdAt))}${v.source === 'manual' ? ' · Manual order' : ' · Store order'}</p>` : ''}
+      ${isEdit ? orderPricingHtml(v.pricing) : ''}
       <div class="form-grid-2">
         <label class="field"><span class="field__label">Customer email *</span>
           <input type="email" name="email" required value="${escapeAttr(v.email || '')}" placeholder="customer@example.com"></label>
