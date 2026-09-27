@@ -151,6 +151,7 @@ function showTab(tab, page) {
     $$('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== tab; });
     if (tab === 'pages') renderPage();
     if (tab === 'shipping') renderShipping();
+    if (tab === 'process') renderProcessMedia();
   };
   // Leaving an open editor runs the unsaved-changes guard first; the switch
   // only happens once it actually closes.
@@ -194,6 +195,7 @@ async function loadAll() {
     loadGallery();
     loadContent();
     loadShipping();
+    loadProcessMedia();
     loadTestimonials();
     loadFaqs();
   } catch (e) {
@@ -751,6 +753,68 @@ function openPatronEditor(patron) {
   });
 }
 
+// ---------- The Process (product page photo strip, per category) ----------
+
+const PROCESS_CATEGORIES = ["Women's Wear", "Men's Wear", 'Home Decor', 'Accessories'];
+
+async function loadProcessMedia() {
+  try {
+    state.processMedia = await api('GET', '/api/process-media');
+  } catch (e) {
+    state.processMedia = { error: e.message };
+  }
+  if (state.tab === 'process') renderProcessMedia();
+}
+
+function renderProcessMedia() {
+  const body = $('#process-body');
+  if (!body) return;
+  const data = state.processMedia;
+  if (!data) { body.innerHTML = '<p class="slot__meta">Loading…</p>'; return; }
+  if (data.error) { body.innerHTML = `<p class="slot__meta">Could not load The Process photos: ${escapeHtml(data.error)}</p>`; return; }
+
+  const categories = data.categories || {};
+  const counts = (cat) => state.products.filter((p) => p.category === cat).length;
+  const overrides = (cat) => state.products.filter((p) => p.category === cat && (p.processMedia || []).length).length;
+
+  body.innerHTML = `
+    <form id="process-form">
+      ${PROCESS_CATEGORIES.map((cat, n) => `
+        <div class="page-card">
+          <div class="page-card__head">
+            <h3 class="page-card__title">${escapeHtml(cat)}</h3>
+            <p class="page-card__hint">${counts(cat)} product${counts(cat) === 1 ? '' : 's'}${overrides(cat) ? ` · ${overrides(cat)} with their own Process photos (set in the product)` : ''}</p>
+          </div>
+          <div data-process-cat="${n}"></div>
+        </div>`).join('')}
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" id="process-reset">Undo changes</button>
+        <button type="submit" class="btn btn--primary">Save The Process photos</button>
+      </div>
+    </form>
+  `;
+
+  const editors = PROCESS_CATEGORIES.map((cat, n) => mountMediaEditor($(`[data-process-cat="${n}"]`, body), categories[cat] || [], {
+    label: 'Photos & videos',
+    hint: 'Shown left to right in "The Process" on every product page in this category — 3–4 work best. Leave empty to use the site-wide Process photos.',
+    itemLabel: (i) => `Step ${i + 1}`,
+  }));
+
+  $('#process-reset').addEventListener('click', renderProcessMedia);
+  $('#process-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = { categories: {} };
+    PROCESS_CATEGORIES.forEach((cat, n) => { payload.categories[cat] = editors[n].getValue(); });
+    try {
+      state.processMedia = await api('PUT', '/api/admin/process-media', payload);
+      toast('The Process photos saved');
+      renderProcessMedia();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+}
+
 // ---------- Shipping ----------
 
 async function loadShipping() {
@@ -1175,6 +1239,7 @@ function openProductModal(product) {
         <input type="checkbox" id="p-available" name="available" ${p.available !== false ? 'checked' : ''}>
         <label for="p-available">Available for purchase</label>
       </div>
+      <div id="product-process-media"></div>
       <div class="form-actions">
         <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
         <button type="submit" class="btn btn--primary">${isEdit ? 'Save changes' : 'Create product'}</button>
@@ -1185,6 +1250,12 @@ function openProductModal(product) {
   const mediaEditor = mountMediaEditor($('#product-media'), entityMedia(p, 'images'), {
     label: 'Photos & videos',
     hint: 'The first item is the primary photo — it is what shows on the shop card and in the cart. Reorder with ↑ ↓. Use Crop / position to fit an oversized photo to the frame.',
+  });
+
+  const processEditor = mountMediaEditor($('#product-process-media'), p.processMedia, {
+    label: 'The Process — this product only (optional)',
+    hint: 'Leave empty to use the category\'s Process photos (set under The Process). Add 3–4 here to show different ones on this product\'s page.',
+    itemLabel: (i) => `Step ${i + 1}`,
   });
 
   // On a new product the slug tracks the name, so it's there without being
@@ -1239,6 +1310,7 @@ function openProductModal(product) {
       // The full ordered gallery. The server derives `images` from it, so the
       // two fields can't drift apart.
       media: mediaEditor.getValue(),
+      processMedia: processEditor.getValue(),
     };
     try {
       if (isEdit) {
@@ -1792,6 +1864,7 @@ const SECTION_LABELS = {
     'category-hero-experience': 'Experience landing page — banner',
     'category-hero-corporate': 'Corporate landing page — banner',
     'category-hero-curated': 'Curated landing page — banner',
+    divider: 'Section divider — printed border strip between the workshop sections',
   },
   gallery: {
     _title: 'Gallery',
@@ -1850,6 +1923,7 @@ const SECTION_SHAPES = {
   'workshops.category-hero-experience': [4, 'Page banner (4:1)'],
   'workshops.category-hero-corporate': [4, 'Page banner (4:1)'],
   'workshops.category-hero-curated': [4, 'Page banner (4:1)'],
+  'workshops.divider': [6.5, 'Divider strip (~13:2)'],
   'shop.hero': [4, 'Page banner (4:1)'],
   'shop.process-1': [0.714, 'Process card (5:7)'],
   'shop.process-2': [0.714, 'Process card (5:7)'],
@@ -2120,9 +2194,13 @@ function mediaThumbHTML(m, cls) {
 // a workshop's mosaic gallery). Mount it on a container, read it back with
 // `getValue()` when the form submits.
 //
-//   mountMediaEditor(container, items, { label, hint })
+//   mountMediaEditor(container, items, { label, hint, itemLabel })
 
-function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {}) {
+function mountMediaEditor(container, initial, {
+  label = 'Media', hint = '',
+  // Caption on each row; the default names the first item as the primary photo.
+  itemLabel = (i) => (i === 0 ? 'Primary — used on cards and in the cart' : `Item ${i + 1}`),
+} = {}) {
   if (!container) return { getValue: () => [] };
   let items = normalizeMediaList(initial);
 
@@ -2153,7 +2231,7 @@ function mountMediaEditor(container, initial, { label = 'Media', hint = '' } = {
       <div class="media-item" data-index="${i}">
         <div class="media-item__thumb">${mediaThumbHTML(m, 'media-item__media')}</div>
         <div class="media-item__body">
-          <p class="media-item__role">${i === 0 ? 'Primary — used on cards and in the cart' : `Item ${i + 1}`}</p>
+          <p class="media-item__role">${escapeHtml(itemLabel(i))}</p>
           <p class="media-item__meta">${m.type === 'video' ? 'Video' : 'Photo'} · ${m.fit === 'contain' ? 'Fit whole frame' : 'Fill frame'} · ${escapeHtml(m.position)}</p>
           <p class="media-item__url">${escapeHtml(m.url)}</p>
         </div>
@@ -4524,7 +4602,7 @@ function markEditorDirty() {
 const TAB_LABELS = {
   products: 'Products', orders: 'Orders', workshops: 'Workshops', blogs: 'Blogs',
   sections: 'All images', gallery: 'Gallery', discounts: 'Discounts', admins: 'Admins',
-  shipping: 'Shipping', enquiries: 'Enquiries',
+  shipping: 'Shipping', enquiries: 'Enquiries', process: 'The Process',
   // The page-design panel names itself after the page being edited.
   pages: 'page design',
 };
