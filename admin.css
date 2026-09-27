@@ -1326,3 +1326,5 @@ body {
 .opricing__table s { opacity: 0.6; }
 .opricing__note { opacity: 0.7; font-size: 12px; }
 .opricing__sep td { border-top: 1px solid rgba(44, 26, 16, 0.12); padding-top: 8px; }
+.order-tag--alert { background: #B44; color: #FFFFFF; }
+.order-review { margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; background: rgba(187, 68, 68, 0.1); color: #8A2E2E; font-size: 13px; line-height: 20px; }

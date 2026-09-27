@@ -346,11 +346,15 @@ const CONTENT_LABELS = {
   'instagram-url': 'Instagram link',
   'facebook-url': 'Facebook link',
   'youtube-url': 'YouTube link',
-  'x-url': 'X (Twitter) link',
+  'linkedin-url': 'LinkedIn link',
+  'partners-title': 'Partners — heading',
+  'partner-name': 'Partner — name',
+  'partner-url': 'Partner — website link',
   'col-1-title': 'Column 1 heading',
   'col-2-title': 'Column 2 heading',
   'col-3-title': 'Column 3 heading',
   address: 'Studio address (one line per line break)',
+  'maps-url': 'Studio address — map link',
   phone: 'Phone number',
   'phone-note': 'Phone — note below',
   email: 'Email address',
@@ -4255,7 +4259,8 @@ function renderOrders() {
     const who = o.customerName ? `${escapeHtml(o.customerName)} · ${escapeHtml(o.email || '—')}` : escapeHtml(o.email || '—');
     const hasLink = o.paymentLink && o.paymentLink.shortUrl && o.status !== 'paid';
     const link = hasLink ? `· <a class="order-link" href="${escapeAttr(o.paymentLink.shortUrl)}" target="_blank" rel="noopener">payment link ↗</a>` : '';
-    const manual = o.source === 'manual' ? '<span class="order-tag">Manual</span>' : '';
+    const manual = (o.source === 'manual' ? '<span class="order-tag">Manual</span>' : '')
+      + (o.needsReview ? `<span class="order-tag order-tag--alert" title="${escapeAttr(o.needsReview)}">Needs review</span>` : '');
     return `
       <div class="admin-row order-row">
         <div class="order-row__main">
@@ -4264,6 +4269,7 @@ function renderOrders() {
         </div>
         <div class="order-row__actions">
           <button class="btn btn--ghost btn--sm" data-edit-order="${escapeAttr(o.id)}">View / Edit</button>
+          ${ORDER_PAID.includes(o.status) ? `<button class="btn btn--ghost btn--sm" data-invoice-order="${escapeAttr(o.id)}">Invoice</button>` : ''}
           ${o.status !== 'paid' ? `<button class="btn btn--ghost btn--sm" data-link-order="${escapeAttr(o.id)}">Payment link</button>` : ''}
           <button class="btn btn--ghost btn--sm" data-del-order="${escapeAttr(o.id)}">Delete</button>
         </div>
@@ -4274,6 +4280,8 @@ function renderOrders() {
 $('#orders-list').addEventListener('click', (e) => {
   const edit = e.target.closest('[data-edit-order]');
   if (edit) { const o = state.orders.find((x) => x.id === edit.dataset.editOrder); if (o) openOrderModal(o); return; }
+  const inv = e.target.closest('[data-invoice-order]');
+  if (inv) { downloadOrderInvoice(inv.dataset.invoiceOrder, inv); return; }
   const link = e.target.closest('[data-link-order]');
   if (link) { generatePaymentLink(link.dataset.linkOrder, link); return; }
   const del = e.target.closest('[data-del-order]');
@@ -4289,6 +4297,29 @@ $$('#order-status-filter .chip').forEach((chip) => {
 });
 
 $('#add-order-btn').addEventListener('click', () => openOrderModal(null));
+
+const ORDER_PAID = ['paid', 'shipped', 'delivered'];
+
+// Fetch the order's PDF invoice (numbered on first request) and save it.
+async function downloadOrderInvoice(id, btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+  try {
+    const res = await fetch(apiUrl(`/api/admin/orders/${encodeURIComponent(id)}/invoice`), { headers: { 'X-Admin-Token': state.token } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+    const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || `Invoice-${id}.pdf`;
+    const url = URL.createObjectURL(await res.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) {
+    toast(`Could not download the invoice: ${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
 
 function orderItemRowHtml(it = {}) {
   return `
@@ -4350,7 +4381,8 @@ function openOrderModal(o) {
     .map((p) => `<option value="${escapeAttr(p.id)}">${escapeAttr(p.name)} — ₹${p.price}</option>`).join('');
   openEditor(isEdit ? `Order ${v.id}` : 'New order', `
     <form id="order-form" class="form" autocomplete="off">
-      ${isEdit ? `<p class="order-modal__meta">${statusBadge(v.status)} · Created ${escapeHtml(orderDate(v.createdAt))}${v.source === 'manual' ? ' · Manual order' : ' · Store order'}</p>` : ''}
+      ${isEdit ? `<p class="order-modal__meta">${statusBadge(v.status)} · Created ${escapeHtml(orderDate(v.createdAt))}${v.source === 'manual' ? ' · Manual order' : ' · Store order'}${v.invoiceNumber ? ` · Invoice ${escapeHtml(v.invoiceNumber)}` : ''}</p>` : ''}
+      ${isEdit && v.needsReview ? `<p class="order-review">⚠ ${escapeHtml(v.needsReview)}</p>` : ''}
       ${isEdit ? orderPricingHtml(v.pricing) : ''}
       <div class="form-grid-2">
         <label class="field"><span class="field__label">Customer email *</span>
