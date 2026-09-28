@@ -4,6 +4,12 @@ const TOKEN_KEY = 'rangmudra_admin_token';
 // Origin of the backend API (set in config.js). Empty = same origin as this page.
 const API_BASE = ((typeof window !== 'undefined' && window.RANGMUDRA_API_BASE) || '').replace(/\/$/, '');
 const apiUrl = (path) => API_BASE + path;
+const SITE_BASE = ((typeof window !== 'undefined' && window.RANGMUDRA_SITE_BASE) || '').replace(/\/$/, '');
+// Where to load a stored media URL from. Absolute URLs (S3) pass through;
+// site-relative ones ("/images/…") live on the public site, not the admin's
+// origin. The stored value itself is never rewritten.
+const siteUrl = (url) => (SITE_BASE && typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')
+  ? SITE_BASE + url : url);
 // Store-wide fallback tax rate, mirrored from DEFAULT_TAX_PERCENT in
 // backend/server.js. Products with no rate of their own are charged this.
 const DEFAULT_TAX_PERCENT = 8;
@@ -1037,7 +1043,7 @@ function renderProducts() {
       : `₹${price.toLocaleString('en-IN')}`;
     card.innerHTML = `
       <div class="card__img card__img--fit card__img--product">
-        ${img ? `<img class="card__media" src="${escapeAttr(img)}" alt="">` : '<span class="card__img-empty">No photo</span>'}
+        ${img ? `<img class="card__media" src="${escapeAttr(siteUrl(img))}" alt="">` : '<span class="card__img-empty">No photo</span>'}
         ${p.featured ? '<span class="card__tag">Featured</span>' : ''}
         ${disc ? `<span class="card__tag card__tag--sale">${discLabel}</span>` : ''}
         ${p.available === false ? '<span class="card__tag card__tag--soldout">Sold out</span>' : ''}
@@ -1361,7 +1367,7 @@ function renderWorkshops() {
       : (w.priceLabel || '');
     card.innerHTML = `
       <div class="card__img card__img--fit card__img--workshop">
-        ${w.image ? `<img class="card__media" src="${escapeAttr(w.image)}" alt="">` : '<span class="card__img-empty">No photo</span>'}
+        ${w.image ? `<img class="card__media" src="${escapeAttr(siteUrl(w.image))}" alt="">` : '<span class="card__img-empty">No photo</span>'}
         <span class="card__tag">${escapeHtml(w.categoryLabel || w.category)}</span>
       </div>
       <div class="card__body">
@@ -1629,7 +1635,7 @@ function renderBlogs() {
     card.className = 'card';
     card.innerHTML = `
       <div class="card__img card__img--fit card__img--blog">
-        ${b.image ? `<img class="card__media" src="${escapeAttr(b.image)}" alt="">` : '<span class="card__img-empty">No photo</span>'}
+        ${b.image ? `<img class="card__media" src="${escapeAttr(siteUrl(b.image))}" alt="">` : '<span class="card__img-empty">No photo</span>'}
         ${b.featured ? '<span class="card__tag">Featured</span>' : ''}
       </div>
       <div class="card__body">
@@ -1666,7 +1672,7 @@ function openBlogModal(blog) {
   openEditor(isEdit ? `Edit — ${b.title}` : 'New blog', `
     <form id="blog-form" class="form-grid" autocomplete="off">
       <div class="upload" data-upload="blog-image">
-        <div class="upload__preview" style="${b.image ? `background-image:url('${b.image}')` : ''}">${b.image ? '' : 'No image'}</div>
+        <div class="upload__preview" style="${b.image ? `background-image:url('${escapeAttr(siteUrl(b.image))}')` : ''}">${b.image ? '' : 'No image'}</div>
         <div class="upload__btns">
           <button type="button" class="btn btn--ghost btn--sm" data-upload-trigger>Upload image</button>
           <button type="button" class="btn btn--ghost btn--sm" data-upload-pick>Choose from gallery</button>
@@ -2057,19 +2063,24 @@ async function saveSection(page, slot, patch) {
 // Shape picker (only on slots listed in SECTION_ASPECTS). Saving the ratio
 // re-renders the slot, so the preview and the crop tool immediately reflect the
 // box the public page will now draw.
-$('#sections-list').addEventListener('change', async (e) => {
+// The same slot cards are drawn in two places — the standalone Section images
+// panel and each website page's Images card — so both containers delegate to
+// these handlers. (Wiring only #sections-list left the page tabs' Upload /
+// Library / Edit photo buttons dead.)
+async function onSectionSlotChange(e) {
   const select = e.target.closest('[data-aspect-select]');
   if (!select) return;
   const { page, slot } = select.dataset;
   try {
     await saveSection(page, slot, { aspect: Number(select.value) });
   } catch (err) { toast(err.message, true); }
-});
+}
 
-$('#sections-list').addEventListener('click', async (e) => {
+async function onSectionSlotClick(e) {
   const btn = e.target.closest('[data-action]');
-  if (!btn) return;
+  if (!btn || !btn.closest('.slot')) return;
   const { page, slot } = btn.dataset;
+  if (!page || !slot) return;
   const current = normalizeMedia(state.sections[page] && state.sections[page][slot]);
 
   switch (btn.dataset.action) {
@@ -2121,6 +2132,13 @@ $('#sections-list').addEventListener('click', async (e) => {
 
     default:
   }
+}
+
+['#sections-list', '#page-body'].forEach((sel) => {
+  const el = $(sel);
+  if (!el) return;
+  el.addEventListener('change', onSectionSlotChange);
+  el.addEventListener('click', onSectionSlotClick);
 });
 
 // ---------- Media model ----------
@@ -2182,13 +2200,13 @@ function notePlaceReplacement(url, version) {
 
 function previewSrc(url) {
   const v = replacedVersions.get(url);
-  if (!v) return url;
-  return `${url}${url.includes('?') ? '&' : '?'}v=${v}`;
+  if (!v) return siteUrl(url);
+  return `${siteUrl(url)}${url.includes('?') ? '&' : '?'}v=${v}`;
 }
 
 function mediaThumbHTML(m, cls) {
   return m.type === 'video'
-    ? `<video class="${cls}" src="${escapeAttr(m.url)}#t=0.1" style="${mediaFitStyle(m)}" muted playsinline preload="metadata"></video>`
+    ? `<video class="${cls}" src="${escapeAttr(siteUrl(m.url))}#t=0.1" style="${mediaFitStyle(m)}" muted playsinline preload="metadata"></video>`
     : `<img class="${cls}" src="${escapeAttr(previewSrc(m.url))}" alt="" style="${mediaFitStyle(m)}">`;
 }
 
@@ -2323,7 +2341,7 @@ const FRAME_ASPECTS = [
 // through fetch + blob sidesteps the image cache entirely, and a blob: URL is
 // same-origin so the canvas is always readable.
 async function loadCroppableImage(url) {
-  const res = await fetch(url, { mode: 'cors', cache: 'reload' });
+  const res = await fetch(siteUrl(url), { mode: 'cors', cache: 'reload' });
   if (!res.ok) throw new Error(`Could not load the file (HTTP ${res.status})`);
   const blob = await res.blob();
   const objectUrl = URL.createObjectURL(blob);
@@ -2897,7 +2915,7 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
       croppable = false;
       sourceMode = false;
       img.hidden = false;
-      img.src = m.url;
+      img.src = siteUrl(m.url);
       $('#frame-tools').hidden = true;
       $('#frame-adjust').hidden = true;
       const start = () => {
@@ -3659,7 +3677,7 @@ function renderGallery() {
           // Playable in place: the library is where you check a clip is the right
           // one, and that needs the video itself, not a first-frame poster.
           // Muted + loop so a grid of them stays quiet.
-          ? `<video class="card__media" src="${escapeAttr(g.url)}" controls loop muted playsinline preload="metadata"></video><span class="card__badge card__badge--corner">Video</span>`
+          ? `<video class="card__media" src="${escapeAttr(siteUrl(g.url))}" controls loop muted playsinline preload="metadata"></video><span class="card__badge card__badge--corner">Video</span>`
           : `<img class="card__media" src="${escapeAttr(previewSrc(g.url))}" alt="">`}
         <span class="card__tag ${g.public ? 'card__tag--public' : 'card__tag--private'}">${g.public ? 'Public' : 'Private'}</span>
       </div>
@@ -3795,8 +3813,8 @@ function openGalleryForm(item) {
       ${isEdit ? `
         <div class="upload">
           ${isVideoItem(g)
-            ? `<video class="upload__preview" src="${escapeAttr(g.url)}" controls muted playsinline preload="metadata"></video>`
-            : `<div class="upload__preview" style="background-image:url('${escapeAttr(g.url)}')"></div>`}
+            ? `<video class="upload__preview" src="${escapeAttr(siteUrl(g.url))}" controls muted playsinline preload="metadata"></video>`
+            : `<div class="upload__preview" style="background-image:url('${escapeAttr(siteUrl(g.url))}')"></div>`}
         </div>
       ` : `
         <div class="field">
@@ -3950,8 +3968,8 @@ function renderPicker(q) {
   grid.innerHTML = items.map((g) => `
     <div class="picker-item" data-pick="${g.id}" title="${escapeAttr(g.title)}">
       ${isVideoItem(g)
-        ? `<video class="picker-item__media" src="${escapeAttr(g.url)}#t=0.1" muted playsinline preload="metadata"></video>`
-        : `<img class="picker-item__media" src="${escapeAttr(g.url)}" alt="">`}
+        ? `<video class="picker-item__media" src="${escapeAttr(siteUrl(g.url))}#t=0.1" muted playsinline preload="metadata"></video>`
+        : `<img class="picker-item__media" src="${escapeAttr(siteUrl(g.url))}" alt="">`}
       <span class="picker-item__label">${escapeHtml(g.title)}</span>
     </div>
   `).join('');

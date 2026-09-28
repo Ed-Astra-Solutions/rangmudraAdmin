@@ -17,4 +17,8 @@
   var host = (typeof location !== 'undefined' && location.hostname) || '';
   var isLocal = host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '';
   window.RANGMUDRA_API_BASE = isLocal ? '' : 'https://api.rangmudra.com';
+  // Origin of the public site. Older records store images as site-relative
+  // paths ("/images/uploads/…"), which only exist there — resolved against the
+  // admin's own origin they 404. Empty = same origin (admin served by backend).
+  window.RANGMUDRA_SITE_BASE = isLocal ? '' : 'https://landing.rangmudra.com';
 })();
