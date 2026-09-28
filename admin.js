@@ -2081,7 +2081,7 @@ async function onSectionSlotClick(e) {
   if (!btn || !btn.closest('.slot')) return;
   const { page, slot } = btn.dataset;
   if (!page || !slot) return;
-  const current = normalizeMedia(state.sections[page] && state.sections[page][slot]);
+  const current = normalizeMedia(state.sections && state.sections[page] && state.sections[page][slot]);
 
   switch (btn.dataset.action) {
     case 'pick-section':
