@@ -49,10 +49,20 @@ const state = {
   // reject an oversized file before spending minutes sending it.
   maxUploadMB: 100,
   // Whether the server can hand out presigned S3 PUTs (also from /ping). When
-  // true, files go browser → S3 directly; the first CORS/network failure flips
-  // this off for the session and everything falls back to the proxied POST.
+  // true, files go browser → S3 directly; a file whose direct PUT fails falls
+  // back to the proxied POST only if it is under proxyUploadMB.
   directUpload: false,
+  // The most the server itself accepts (the HEIC/fallback route), from /ping.
+  proxyUploadMB: 25,
 };
+
+// Apply the upload limits/capabilities /api/admin/ping reports.
+function applyPing(p) {
+  if (!p) return;
+  if (p.maxUploadMB) state.maxUploadMB = p.maxUploadMB;
+  if (p.proxyUploadMB) state.proxyUploadMB = p.proxyUploadMB;
+  state.directUpload = !!p.directUpload;
+}
 
 // ---------- HTTP ----------
 
@@ -123,10 +133,7 @@ $('#login-form').addEventListener('submit', async (e) => {
     state.email = data.email || email;
     localStorage.setItem(TOKEN_KEY, state.token);
     // Pick up the upload limits/capabilities the boot path gets from /ping.
-    api('GET', '/api/admin/ping').then((p) => {
-      if (p && p.maxUploadMB) state.maxUploadMB = p.maxUploadMB;
-      state.directUpload = !!(p && p.directUpload);
-    }).catch(() => {});
+    api('GET', '/api/admin/ping').then(applyPing).catch(() => {});
     showApp();
   } catch (e) {
     err.textContent = e.message;
@@ -260,6 +267,13 @@ const PAGES = {
     title: 'Enquire', url: '/enquire.html', content: 'enquire', sections: 'enquire',
     subtitle: 'Connect With Us — the craft carousel, contact cards and enquiry form.',
   },
+  // Laid out like a blog post: a cover image or video, then one long body that
+  // can carry photos and videos between its sections (mediaField).
+  sustainability: {
+    title: 'Sustainability', url: '/sustainability.html', content: 'sustainability', sections: 'sustainability',
+    richText: true, mediaField: 'body',
+    subtitle: 'The Sustainability Commitment page, linked from the footer. The cover can be a photo or a video; photos and videos can also sit between sections of the page text.',
+  },
   footer: {
     title: 'Footer', url: '/index.html#footer', content: 'footer',
     subtitle: 'The footer on every page, plus the WhatsApp button and the bottom strip.',
@@ -283,6 +297,10 @@ const PAGES = {
 const RICH_TEXT_HINT = 'Formatting: start a line with <code>## </code> for a section heading and <code>- </code> for a bullet; leave a blank line between paragraphs. '
   + 'Inside a paragraph, <code>**bold**</code>, <code>*italic*</code> and <code>[link text](https://…)</code> work, and email addresses and web links become clickable on their own.';
 
+// Extra line for a page whose long text can hold pictures (cfg.mediaField).
+const MEDIA_TEXT_HINT = 'Photos and videos: put the cursor where one should go and use <strong>+ Insert image</strong>, <strong>+ Insert video</strong> or <strong>Choose from gallery</strong>. '
+  + 'Each becomes a line like <code>![alt text | caption](link)</code> — fill in the alt text (what the picture shows, for screen readers) and an optional caption. Delete the line to remove it.';
+
 // Friendly names for the copy fields. Anything missing falls back to the key
 // itself with dashes turned into spaces, so a new field is still editable the
 // moment it is added to content.json.
@@ -305,6 +323,10 @@ const CONTENT_LABELS = {
   'hero-title': 'Hero heading',
   'hero-subtitle': 'Hero paragraph',
   'toolbar-label': 'Toolbar label',
+  'custom-eyebrow': 'Custom workshops card — eyebrow',
+  'custom-heading': 'Custom workshops card — heading',
+  'custom-body': 'Custom workshops card — message',
+  'custom-cta': 'Custom workshops card — button',
   'experience-eyebrow': 'Experience — eyebrow',
   'experience-title': 'Experience — heading',
   'experience-desc': 'Experience — description',
@@ -333,9 +355,6 @@ const CONTENT_LABELS = {
   'recent-eyebrow': 'Recent posts label',
   'empty-text': 'Empty-results message',
   'scroll-label': 'Scroll hint',
-  'craft-eyebrow': 'Craft carousel — eyebrow',
-  'craft-heading': 'Craft carousel — heading',
-  'craft-subtitle': 'Craft carousel — intro line',
   'form-eyebrow': 'Form — eyebrow',
   'form-heading': 'Form — heading',
   'form-subtitle': 'Form — paragraph',
@@ -353,9 +372,6 @@ const CONTENT_LABELS = {
   'facebook-url': 'Facebook link',
   'youtube-url': 'YouTube link',
   'linkedin-url': 'LinkedIn link',
-  'partners-title': 'Partners — heading',
-  'partner-name': 'Partner — name',
-  'partner-url': 'Partner — website link',
   'col-1-title': 'Column 1 heading',
   'col-2-title': 'Column 2 heading',
   'col-3-title': 'Column 3 heading',
@@ -371,6 +387,8 @@ const CONTENT_LABELS = {
   copyright: 'Copyright line',
   title: 'Page title',
   body: 'Page text',
+  eyebrow: 'Small heading above the title',
+  intro: 'Introduction (the opening paragraph)',
 };
 
 function contentLabel(key) {
@@ -421,6 +439,7 @@ function renderPage() {
         <h3 class="page-card__title">Text &amp; headings</h3>
         <p class="page-card__hint">Edit any wording on this page. Changes go live as soon as you save — no redeploy.</p>
         ${cfg.richText ? `<p class="page-card__hint">${RICH_TEXT_HINT}</p>` : ''}
+        ${cfg.mediaField ? `<p class="page-card__hint">${MEDIA_TEXT_HINT}</p>` : ''}
       </div>
       ${keys.length ? `
       <form id="page-content-form" class="page-fields" autocomplete="off">
@@ -428,11 +447,18 @@ function renderPage() {
           const v = fields[k] ?? '';
           const id = `content-${cfg.content}-${k}`;
           // A whole document (the policy pages) gets the full width to read in.
-          const wide = String(v).length > 1500 ? ' field--wide' : '';
+          const withMedia = k === cfg.mediaField;
+          const wide = withMedia || String(v).length > 1500 ? ' field--wide' : '';
           return `
             <label class="field${wide}">
               <span class="field__label">${escapeHtml(contentLabel(k))}</span>
-              ${isLongCopy(v)
+              ${withMedia ? `
+              <span class="upload__btns" style="margin-bottom:8px;">
+                <button type="button" class="btn btn--ghost btn--sm" data-body-insert="image">+ Insert image</button>
+                <button type="button" class="btn btn--ghost btn--sm" data-body-insert="video">+ Insert video</button>
+                <button type="button" class="btn btn--ghost btn--sm" data-body-insert="gallery">Choose from gallery</button>
+              </span>` : ''}
+              ${withMedia || isLongCopy(v)
                 ? `<textarea id="${id}" name="${escapeHtml(k)}" rows="${textareaRows(v)}">${escapeHtml(v)}</textarea>`
                 : `<input type="text" id="${id}" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`}
             </label>`;
@@ -489,10 +515,51 @@ function renderPage() {
       }
     });
     $('#page-content-reset').addEventListener('click', renderPage);
+    if (cfg.mediaField && form.elements[cfg.mediaField]) wireBodyMedia(form, form.elements[cfg.mediaField]);
   }
 
   body.querySelectorAll('[data-goto-tab]').forEach((btn) => {
     btn.addEventListener('click', () => showTab(btn.dataset.gotoTab));
+  });
+}
+
+// The Insert image / video / gallery buttons above a page's long text: upload
+// (or pick) the file, then drop an `![ | ](url)` line at the cursor — the same
+// line the blog editor writes, rendered as a <figure> by the public page.
+function wireBodyMedia(root, textarea) {
+  root.querySelectorAll('[data-body-insert]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.bodyInsert;
+      if (kind === 'gallery') {
+        openGalleryPicker({
+          onSelect: (item) => {
+            const alt = String(item.alt || item.title || '').replace(/[|\]]/g, ' ').trim();
+            insertContentBlock(`![${alt} | ](${item.url})`, textarea);
+            toast('Inserted — check the alt text and add a caption if you like');
+          },
+        });
+        return;
+      }
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = kind === 'video' ? 'video/*' : 'image/*,.heic,.heif';
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        try {
+          checkUploadSize(file);
+          const { items: [m], errors } = await uploadFiles([file], (done, total, f, frac) => {
+            toast(`Uploading ${f.name}…${frac ? ` ${Math.round(frac * 100)}%` : ''}`);
+          });
+          if (!m) throw new Error(errors[0].message);
+          insertContentBlock(`![ | ](${m.url})`, textarea);
+          toast(kind === 'video'
+            ? 'Video inserted — add a caption if you like, then Save text'
+            : 'Image inserted — add alt text and an optional caption, then Save text');
+        } catch (err) { toast(err.message, true); }
+      };
+      input.click();
+    });
   });
 }
 
@@ -806,7 +873,7 @@ function renderProcessMedia() {
 
   const editors = PROCESS_CATEGORIES.map((cat, n) => mountMediaEditor($(`[data-process-cat="${n}"]`, body), categories[cat] || [], {
     label: 'Photos & videos',
-    hint: 'Shown left to right in "The Process" on every product page in this category — 3–4 work best. Leave empty to use the site-wide Process photos.',
+    hint: 'Shown left to right in "The Process" on every product page in this category — 3–4 work best. Leave empty to show the default Process photos.',
     itemLabel: (i) => `Step ${i + 1}`,
   }));
 
@@ -1817,8 +1884,7 @@ function openBlogModal(blog) {
 
 // Insert `snippet` as its own block at the cursor in the content textarea,
 // padding it with blank lines so it parses as a standalone block.
-function insertContentBlock(snippet) {
-  const ta = $('#blog-content');
+function insertContentBlock(snippet, ta = $('#blog-content')) {
   if (!ta) return;
   const start = ta.selectionStart ?? ta.value.length;
   const before = ta.value.slice(0, start);
@@ -1858,11 +1924,8 @@ const SECTION_LABELS = {
   },
   shop: {
     _title: 'Shop',
-    _file: 'shop.html + product.html',
+    _file: 'shop.html',
     hero: 'Shop hero (hanging fabrics)',
-    'process-1': 'Product page — The Process 1',
-    'process-2': 'Product page — The Process 2',
-    'process-3': 'Product page — The Process 3',
   },
   workshops: {
     _title: 'Workshops',
@@ -1896,6 +1959,11 @@ const SECTION_LABELS = {
     'team-secondary': 'Our Team — secondary',
     'team-video': 'Our Team — video (the PLAY NOW button)',
     'faq-decor': 'FAQ decorative',
+  },
+  sustainability: {
+    _title: 'Sustainability',
+    _file: 'sustainability.html',
+    hero: 'Cover — photo or video behind the title',
   },
   enquire: {
     _title: 'Enquire',
@@ -1935,15 +2003,13 @@ const SECTION_SHAPES = {
   'workshops.category-hero-curated': [4, 'Page banner (4:1)'],
   'workshops.divider': [6.5, 'Divider strip (~13:2)'],
   'shop.hero': [4, 'Page banner (4:1)'],
-  'shop.process-1': [0.714, 'Process card (5:7)'],
-  'shop.process-2': [0.714, 'Process card (5:7)'],
-  'shop.process-3': [0.714, 'Process card (5:7)'],
   'enquire.hero': [2.5, 'Enquire hero (5:2)'],
   'enquire.carousel-1': [2.28, 'Carousel slide (~16:7)'],
   'enquire.carousel-2': [2.28, 'Carousel slide (~16:7)'],
   'enquire.carousel-3': [2.28, 'Carousel slide (~16:7)'],
   'blogs.hero': [4, 'Page banner (4:1)'],
   'gallery.hero': [4, 'Page banner (4:1)'],
+  'sustainability.hero': [2.75, 'Page cover (~11:4)'],
 };
 
 const DEFAULT_SHAPE = [1.6, 'Section band (16:10)'];
@@ -2054,10 +2120,17 @@ function renderSections() {
 
 // Save a slot. Fields omitted from `patch` keep their stored value, so framing
 // survives a photo swap only when the caller means it to.
+//
+// Only this slot is refreshed (from the server's answer), not the whole panel:
+// reloading every dataset after each image change was ~16 requests a click,
+// enough to trip the API rate limit during an ordinary editing session.
 async function saveSection(page, slot, patch) {
-  await api('PUT', `/api/admin/sections/${page}/${slot}`, patch);
+  const { ok, page: _page, slot: _slot, ...value } = await api('PUT', `/api/admin/sections/${page}/${slot}`, patch);
+  state.sections = { ...(state.sections || {}), [page]: { ...((state.sections || {})[page] || {}), [slot]: value } };
   toast('Section updated');
-  loadAll();
+  renderSections();
+  // A new asset was uploaded or picked — keep the library in step.
+  if (patch.url) loadGallery();
 }
 
 // Shape picker (only on slots listed in SECTION_ASPECTS). Saving the ratio
@@ -3213,25 +3286,134 @@ async function renderCrop(img, { sx, sy, sw, sh }, mime = 'image/jpeg') {
 
 // ---------- Upload helper ----------
 
-// HEIC has to travel through the server: it is transcoded to JPEG there, which
-// can only happen if the bytes pass through. Everything else can go straight to
-// S3.
+// HEIC is converted to JPEG in the browser when the browser can decode it
+// (Safari can). When it can't, the raw HEIC goes through the server, which
+// transcodes it. Everything else goes straight to S3.
 const HEIC_FILE_RE = /\.(heic|heif)$/i;
 const needsServerTranscode = (file) =>
   HEIC_FILE_RE.test(file.name || '') || /^image\/hei[cf]$/i.test(file.type || '');
+
+// ---------- Image compression (before upload) ----------
+//
+// Photos straight off a camera or phone are 4000–8000 px and several MB, far
+// more than any page here shows. They are scaled so the long edge is at most
+// IMAGE_MAX_EDGE (wide enough for a full-bleed banner on a retina screen) and
+// re-encoded as JPEG — or PNG when the image has transparency — before they
+// leave the browser. Same approach as the wedding_clikz admin's compressImage.
+// Re-encoding also drops EXIF, so phone GPS data never reaches the bucket.
+//
+// GIFs (may be animated) and anything that isn't a photo format pass through
+// untouched, and a re-encode that comes out bigger than the original is
+// discarded in favour of the original.
+const IMAGE_MAX_EDGE = 2560;
+const IMAGE_QUALITY = 0.85;
+const COMPRESSIBLE_IMAGE_RE = /^image\/(jpeg|png|webp|avif)$/i;
+// Already-small images that need no resize are left alone.
+const SKIP_COMPRESS_UNDER = 300 * 1024;
+
+const isCompressibleImage = (file) =>
+  COMPRESSIBLE_IMAGE_RE.test(file.type || '') || needsServerTranscode(file);
+
+// Decode with EXIF orientation applied, so a portrait phone photo stays upright.
+async function decodeImage(file) {
+  if (typeof createImageBitmap === 'function') {
+    try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch { /* try <img> */ }
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not decode image')); };
+    img.src = url;
+  });
+}
+
+// Does the drawn image use transparency? Checked on a small copy — exact
+// enough to tell a logo cut-out from an opaque photo.
+function canvasHasAlpha(canvas) {
+  const probe = document.createElement('canvas');
+  probe.width = 64; probe.height = 64;
+  const ctx = probe.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(canvas, 0, 0, 64, 64);
+  const { data } = ctx.getImageData(0, 0, 64, 64);
+  for (let i = 3; i < data.length; i += 4) if (data[i] < 250) return true;
+  return false;
+}
+
+const canvasToBlob = (canvas, type, quality) =>
+  new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+
+// Returns { file, width, height } — the file to upload (the original when
+// compressing doesn't help) and its pixel size when known.
+//   keepType — the output must stay the input's format (the photo editor's
+//              in-place replace, whose URL extension can't change).
+async function prepareForUpload(file, { keepType = false } = {}) {
+  if (!isCompressibleImage(file)) return { file };
+  const heic = needsServerTranscode(file);
+  if (heic && keepType) return { file };
+
+  let src;
+  try { src = await decodeImage(file); } catch { return { file }; } // HEIC in Chrome: server converts it
+  const w0 = src.width || src.naturalWidth;
+  const h0 = src.height || src.naturalHeight;
+  const original = { file, width: w0, height: h0 };
+  const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(w0, h0));
+  if (!heic && scale === 1 && file.size <= SKIP_COMPRESS_UNDER) {
+    if (src.close) src.close();
+    return original;
+  }
+
+  const w = Math.round(w0 * scale);
+  const h = Math.round(h0 * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(src, 0, 0, w, h);
+  if (src.close) src.close();
+
+  let outType;
+  if (keepType) outType = file.type;
+  else if (heic || /jpeg/i.test(file.type)) outType = 'image/jpeg';
+  else outType = canvasHasAlpha(canvas) ? 'image/png' : 'image/jpeg';
+
+  const blob = await canvasToBlob(canvas, outType, IMAGE_QUALITY);
+  // toBlob quietly falls back to PNG for a type it can't encode (WebP/AVIF in
+  // some browsers) — that is not the format asked for, so keep the original.
+  if (!blob || blob.type !== outType) return heic ? { file } : original;
+  if (!heic && blob.size >= file.size) return original;
+
+  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/avif': 'avif' }[outType];
+  const name = `${(file.name || 'image').replace(/\.[^.]+$/, '')}.${ext}`;
+  return { file: new File([blob], name, { type: outType, lastModified: Date.now() }), width: w, height: h };
+}
+
+// The server route takes only small files when S3 is configured; say why
+// rather than sending a big body for it to refuse.
+function checkProxySize(file, why) {
+  if (file.size <= state.proxyUploadMB * 1024 * 1024) return;
+  const mb = (file.size / 1024 / 1024).toFixed(1);
+  throw new Error(why === 'heic'
+    ? `"${file.name}" is a ${mb} MB HEIC photo this browser can't convert, and it is too large to convert on the server (limit ${state.proxyUploadMB} MB). Export it as JPEG and try again.`
+    : `"${file.name}" (${mb} MB) could not be sent straight to storage, and it is too large to go through the server (limit ${state.proxyUploadMB} MB). Check your connection and try again — if it keeps failing, the S3 bucket's CORS settings need checking.`);
+}
+
+// Videos the server is shrinking in the background since the last upload
+// report, so the report can say so.
+let pendingVideoCompressions = 0;
 
 // PUT the file straight at S3 with a presigned URL, reporting real progress.
 //
 // fetch() can't report upload progress, so this is XHR. A CORS-blocked or
 // dropped PUT surfaces as a status-0 error, which the caller treats as "direct
 // upload isn't usable here" and falls back to the proxied route.
-function putToS3(uploadUrl, file, onProgress) {
+function putToS3(uploadUrl, file, onProgress, cacheControl) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', uploadUrl, true);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
     // Must match the CacheControl that was signed, or S3 rejects the signature.
-    xhr.setRequestHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    xhr.setRequestHeader('Cache-Control', cacheControl || 'public, max-age=31536000, immutable');
     xhr.upload.addEventListener('progress', (e) => {
       if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
     });
@@ -3250,42 +3432,58 @@ function putToS3(uploadUrl, file, onProgress) {
 // The one upload path everything else calls. Returns the same
 // { url, id, item } shape whichever route it took.
 //
+// Images are compressed in the browser first (prepareForUpload); videos are
+// recompressed by the server in the background after they register.
+//
 //   direct  — presign → browser PUTs to S3 → register the library record.
-//             The bytes skip this app and its reverse proxy entirely, which is
-//             what makes big videos reliable.
+//             The bytes skip this app and its reverse proxy entirely.
 //   proxied — multipart POST to /api/admin/upload (the original route). Used
-//             for HEIC, when S3 isn't configured, and as the fallback whenever
-//             a direct attempt fails for a reason that isn't the file itself.
+//             when S3 isn't configured (local dev), for HEIC the browser
+//             couldn't convert, and as a per-file fallback when a direct PUT
+//             fails — only for files under proxyUploadMB, so the server is
+//             never handed a video-sized body.
 async function uploadOne(file, meta = {}, onProgress) {
+  const prepared = await prepareForUpload(file);
+  file = prepared.file;
+  if (prepared.width && prepared.height) meta = { ...meta, width: prepared.width, height: prepared.height };
   checkUploadSize(file);
 
-  if (state.directUpload && !needsServerTranscode(file)) {
-    try {
-      const signed = await api('POST', '/api/admin/upload-url', {
-        filename: file.name,
-        contentType: file.type || '',
-        size: file.size,
-      });
-      await putToS3(signed.uploadUrl, file, onProgress);
-      return await api('POST', '/api/admin/upload-register', { key: signed.key, ...meta });
-    } catch (err) {
-      // A rejection from S3 itself (CORS not set, network wall) means direct
-      // upload isn't usable from this browser — stop trying for the session and
-      // fall through. A rejection from our own API (413 too large, 415 wrong
-      // type) is about the file, so let it stand.
-      if (!err.direct) throw err;
-      console.warn('[upload] direct-to-S3 failed, falling back to the server route:', err.message);
-      state.directUpload = false;
-    }
-  }
+  const viaServer = async () => {
+    if (onProgress) onProgress(0);
+    const fd = new FormData();
+    fd.append('file', file);
+    Object.entries(meta).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') fd.append(k, v);
+    });
+    return api('POST', '/api/admin/upload', fd, true);
+  };
+  const done = (res) => {
+    if (res && res.item && res.item.processing === 'pending') pendingVideoCompressions += 1;
+    return res;
+  };
 
-  if (onProgress) onProgress(0);
-  const fd = new FormData();
-  fd.append('file', file);
-  Object.entries(meta).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') fd.append(k, v);
-  });
-  return api('POST', '/api/admin/upload', fd, true);
+  if (!state.directUpload) return done(await viaServer());
+  if (needsServerTranscode(file)) {
+    checkProxySize(file, 'heic');
+    return done(await viaServer());
+  }
+  try {
+    const signed = await api('POST', '/api/admin/upload-url', {
+      filename: file.name,
+      contentType: file.type || '',
+      size: file.size,
+    });
+    await putToS3(signed.uploadUrl, file, onProgress, signed.cacheControl);
+    return done(await api('POST', '/api/admin/upload-register', { key: signed.key, ...meta }));
+  } catch (err) {
+    // A rejection from our own API (413 too large, 415 wrong type) is about the
+    // file, so let it stand. A rejection from S3 itself (network drop, CORS)
+    // may be passing — fall back for this file only, and only if it is small.
+    if (!err.direct) throw err;
+    console.warn('[upload] direct-to-S3 failed:', err.message);
+    checkProxySize(file);
+    return done(await viaServer());
+  }
 }
 
 // Upload bytes only. Every upload auto-registers into the gallery library;
@@ -3299,13 +3497,28 @@ async function uploadFile(file) {
 // creates no new file and no new library record: the URL stays exactly as it is,
 // which is what lets one edit reach every record already pointing at it.
 //
-// Always the proxied route — the presigned direct PUT signs a fresh key, and the
-// server is the only place that can check the key we are overwriting is really
-// ours and really exists.
+// Direct when S3 is configured: the server checks the key is really ours and
+// really exists, signs a PUT over it, and the browser sends the bytes. The
+// proxied route remains for local dev and as a small-file fallback.
 async function replaceStoredImage(url, file) {
+  const prepared = await prepareForUpload(file, { keepType: true });
+  const out = prepared.file;
+  const dims = prepared.width ? { width: prepared.width, height: prepared.height } : {};
+  if (state.directUpload) {
+    try {
+      const signed = await api('POST', '/api/admin/upload-replace-url', { url, contentType: out.type });
+      await putToS3(signed.uploadUrl, out, null, signed.cacheControl);
+      return await api('POST', '/api/admin/upload-replace-done', { url, ...dims });
+    } catch (err) {
+      if (!err.direct) throw err;
+      console.warn('[upload] direct replace failed:', err.message);
+      checkProxySize(out);
+    }
+  }
   const fd = new FormData();
-  fd.append('file', file);
+  fd.append('file', out);
   fd.append('url', url);
+  Object.entries(dims).forEach(([k, v]) => fd.append(k, v));
   return api('POST', '/api/admin/upload-replace', fd, true);
 }
 
@@ -3324,6 +3537,7 @@ async function uploadImage(file, meta = {}, onProgress) {
 // collected and returned alongside the successes. `onProgress(doneCount,
 // total, file)` fires before each file starts.
 async function uploadFiles(files, onProgress) {
+  pendingVideoCompressions = 0;
   const items = [];
   const errors = [];
   let done = 0;
@@ -3345,12 +3559,15 @@ async function uploadFiles(files, onProgress) {
 // One toast for a whole batch: silent success, the single message when only one
 // file failed, and a partial-success summary when some got through.
 function reportUploadResult(okCount, errors, { done = 'uploaded to the library' } = {}) {
+  const shrinking = pendingVideoCompressions;
+  pendingVideoCompressions = 0;
+  const note = shrinking ? ` · ${shrinking === 1 ? 'the video' : `${shrinking} videos`} will be compressed to web size in the background` : '';
   if (errors.length && !okCount) {
     toast(errors.length === 1 ? errors[0].message : `All ${errors.length} files failed — ${errors[0].message}`, true);
   } else if (errors.length) {
     toast(`${okCount} ${done} · ${errors.length} failed — ${errors[0].message}`, true);
   } else {
-    toast(okCount === 1 ? `1 file ${done}` : `${okCount} files ${done}`);
+    toast((okCount === 1 ? `1 file ${done}` : `${okCount} files ${done}`) + note);
   }
 }
 
@@ -3677,7 +3894,7 @@ function renderGallery() {
           // Playable in place: the library is where you check a clip is the right
           // one, and that needs the video itself, not a first-frame poster.
           // Muted + loop so a grid of them stays quiet.
-          ? `<video class="card__media" src="${escapeAttr(siteUrl(g.url))}" controls loop muted playsinline preload="metadata"></video><span class="card__badge card__badge--corner">Video</span>`
+          ? `<video class="card__media" src="${escapeAttr(siteUrl(g.url))}" controls loop muted playsinline preload="metadata"></video><span class="card__badge card__badge--corner">${g.processing === 'pending' ? 'Video · compressing…' : 'Video'}</span>`
           : `<img class="card__media" src="${escapeAttr(previewSrc(g.url))}" alt="">`}
         <span class="card__tag ${g.public ? 'card__tag--public' : 'card__tag--private'}">${g.public ? 'Public' : 'Private'}</span>
       </div>
@@ -3770,8 +3987,9 @@ function wireGalleryFilePreview() {
       ? `${file.name} · ${size(file.size)}`
       : `${files.length} files · ${size(totalBytes)} · previewing ${file.name}`;
 
-    // Flag oversized files now instead of after a long failed upload.
-    const tooBig = files.filter((f) => f.size / 1024 / 1024 > state.maxUploadMB);
+    // Flag oversized files now instead of after a long failed upload. Photos
+    // are exempt: they are resized and compressed before they're sent.
+    const tooBig = files.filter((f) => !isCompressibleImage(f) && f.size / 1024 / 1024 > state.maxUploadMB);
     if (tooBig.length) {
       errEl.textContent = tooBig.length === 1
         ? `"${tooBig[0].name}" is ${(tooBig[0].size / 1024 / 1024).toFixed(1)} MB — the limit is ${state.maxUploadMB} MB. Compress it and choose again.`
@@ -3827,7 +4045,7 @@ function openGalleryForm(item) {
             <span class="file-preview__name" id="gallery-file-name">No files chosen</span>
           </div>
           <input type="file" accept="image/*,video/*,.heic,.heif" name="file" id="gallery-file" multiple required hidden>
-          <span class="field__hint">Pick several at once — each becomes its own library record. Images, HEIC (auto-converted to JPEG), and video up to ${state.maxUploadMB} MB each.</span>
+          <span class="field__hint">Pick several at once — each becomes its own library record. Photos (including HEIC) are resized to ${IMAGE_MAX_EDGE} px and compressed before upload. Videos up to ${state.maxUploadMB} MB, compressed to web size after upload.</span>
           <p class="field__error" id="gallery-file-error" hidden></p>
         </div>
       `}
@@ -3887,6 +4105,7 @@ function openGalleryForm(item) {
         // typed once applies to all of them, with the title numbered per file.
         const errors = [];
         let ok = 0;
+        pendingVideoCompressions = 0;
         for (const [i, file] of files.entries()) {
           const head = files.length === 1 ? `Uploading ${file.name}` : `Uploading ${i + 1} of ${files.length} — ${file.name}`;
           toast(`${head}…`);
@@ -3948,8 +4167,11 @@ function openGalleryPicker({ onSelect }) {
   $('#picker-search').value = '';
   renderPicker('');
   $('#picker-backdrop').hidden = false;
-  // Load fresh if the library hasn't been fetched yet.
-  if (!state.gallery.length) loadGallery().then(() => renderPicker($('#picker-search').value.trim().toLowerCase()));
+  // Show what we have at once, then refresh: anything uploaded since the
+  // library was last fetched (from another tab, page or editor) must be pickable.
+  loadGallery().then(() => {
+    if (!$('#picker-backdrop').hidden) renderPicker($('#picker-search').value.trim().toLowerCase());
+  });
   setTimeout(() => $('#picker-search').focus(), 0);
 }
 
@@ -4851,8 +5073,7 @@ if (state.token) {
   api('GET', '/api/admin/ping')
     .then((data) => {
       state.email = (data && data.email) || '';
-      if (data && data.maxUploadMB) state.maxUploadMB = data.maxUploadMB;
-      state.directUpload = !!(data && data.directUpload);
+      applyPing(data);
       showApp();
     })
     .catch(showLogin);

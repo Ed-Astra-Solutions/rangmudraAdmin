@@ -73,6 +73,21 @@ body {
   font-size: 22px;
   letter-spacing: 0.15em;
 }
+/* The RangMudra name as drawn in the logo: Maiandra regular, emboldened by
+   the <b> it is set in, mixed case. Overrides the wordmark's wide tracking. */
+@font-face {
+  font-family: 'Maiandra';
+  src: url('fonts/maiandra-regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+.brand-name {
+  font-family: 'Maiandra', var(--font-italiana);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
 .brand-tag {
   font-size: 11px;
   letter-spacing: 0.2em;
