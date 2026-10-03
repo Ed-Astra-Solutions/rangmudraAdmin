@@ -265,7 +265,7 @@ const PAGES = {
   },
   enquire: {
     title: 'Enquire', url: '/enquire.html', content: 'enquire', sections: 'enquire',
-    subtitle: 'Connect With Us — the craft carousel, contact cards and enquiry form.',
+    subtitle: 'Connect With Us — the contact cards and enquiry form.',
   },
   // Laid out like a blog post: a cover image or video, then one long body that
   // can carry photos and videos between its sections (mediaField).
@@ -1969,9 +1969,6 @@ const SECTION_LABELS = {
     _title: 'Enquire',
     _file: 'enquire.html',
     hero: 'Enquire hero',
-    'carousel-1': 'Artistic Experience slide 1',
-    'carousel-2': 'Artistic Experience slide 2',
-    'carousel-3': 'Artistic Experience slide 3',
   },
 };
 
@@ -2004,9 +2001,6 @@ const SECTION_SHAPES = {
   'workshops.divider': [6.5, 'Divider strip (~13:2)'],
   'shop.hero': [4, 'Page banner (4:1)'],
   'enquire.hero': [2.5, 'Enquire hero (5:2)'],
-  'enquire.carousel-1': [2.28, 'Carousel slide (~16:7)'],
-  'enquire.carousel-2': [2.28, 'Carousel slide (~16:7)'],
-  'enquire.carousel-3': [2.28, 'Carousel slide (~16:7)'],
   'blogs.hero': [4, 'Page banner (4:1)'],
   'gallery.hero': [4, 'Page banner (4:1)'],
   'sustainability.hero': [2.75, 'Page cover (~11:4)'],
