@@ -21,7 +21,7 @@ const state = {
   token: localStorage.getItem(TOKEN_KEY) || '',
   email: '',
   tab: 'pages',
-  // Which website page the "Website page design" group is showing.
+  // Which website page the "Pages" group under Website controls is showing.
   page: 'homepage',
   content: null,
   shippingConfig: null,
@@ -99,6 +99,7 @@ async function api(method, path, body, isFormData = false) {
 // ---------- Auth ----------
 
 function showLogin() {
+  stopNotifications();
   $('#login-screen').hidden = false;
   $('#app-shell').hidden = true;
   setTimeout(() => $('#login-passcode')?.focus(), 0);
@@ -113,6 +114,7 @@ function showApp() {
     who.hidden = !state.email;
   }
   loadAll();
+  startNotifications();
 }
 
 $('#login-form').addEventListener('submit', async (e) => {
@@ -162,6 +164,11 @@ function showTab(tab, page) {
       b.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     $$('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== tab; });
+    // Keep the sidebar on the half of the console this tab belongs to (a bell
+    // click or a "records" link can jump across).
+    const set = navSetOf(tab);
+    lastTabInSet[set] = { tab, page: tab === 'pages' ? state.page : undefined };
+    showNavSet(set);
     if (tab === 'pages') renderPage();
     if (tab === 'shipping') renderShipping();
     if (tab === 'process') renderProcessMedia();
@@ -175,6 +182,195 @@ function showTab(tab, page) {
 $$('.admin-tab').forEach((btn) => {
   btn.addEventListener('click', () => showTab(btn.dataset.tab, btn.dataset.page));
 });
+
+// ---------- Sidebar halves: Website controls / Enquiries & orders ----------
+
+const INBOX_TABS = ['orders', 'enquiries'];
+const navSetOf = (tab) => (INBOX_TABS.includes(tab) ? 'inbox' : 'website');
+// Where each half was left, so switching back returns to the same tab.
+const lastTabInSet = { website: { tab: 'pages', page: 'homepage' }, inbox: { tab: 'orders' } };
+
+function showNavSet(set) {
+  $$('[data-nav-set]').forEach((n) => { n.hidden = n.dataset.navSet !== set; });
+  $$('[data-nav-switch]').forEach((b) => b.setAttribute('aria-selected', b.dataset.navSwitch === set ? 'true' : 'false'));
+}
+
+$$('[data-nav-switch]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const set = btn.dataset.navSwitch;
+    if (navSetOf(state.tab) === set) return;
+    const last = lastTabInSet[set];
+    showTab(last.tab, last.page);
+  });
+});
+
+// ---------- Notifications (unseen paid orders + new enquiries) ----------
+
+const NOTIF_POLL_MS = 60 * 1000;
+const notif = { orders: 0, enquiries: 0, items: [], timer: null, baseTitle: document.title };
+
+async function refreshNotifications() {
+  if (!state.token) return;
+  let data;
+  try { data = await api('GET', '/api/admin/notifications'); } catch (_) { return; }
+  // Something arrived since the last poll — pull the lists so the new rows show.
+  if (data.orders > notif.orders) loadOrders();
+  if (data.enquiries > notif.enquiries) loadEnquiries();
+  Object.assign(notif, { orders: data.orders || 0, enquiries: data.enquiries || 0, items: data.items || [] });
+  renderNotifications();
+}
+
+function renderNotifications() {
+  const counts = { orders: notif.orders, enquiries: notif.enquiries, all: notif.orders + notif.enquiries };
+  $$('[data-notif-count]').forEach((el) => {
+    const n = counts[el.dataset.notifCount] || 0;
+    el.textContent = n > 99 ? '99+' : String(n);
+    el.hidden = n === 0;
+  });
+  const bell = $('#notif-bell');
+  if (bell) {
+    bell.classList.toggle('has-new', counts.all > 0);
+    bell.setAttribute('aria-label', counts.all ? `Notifications — ${counts.all} new` : 'Notifications');
+  }
+  document.title = counts.all ? `(${counts.all}) ${notif.baseTitle}` : notif.baseTitle;
+  if (!$('#notif-panel').hidden) renderNotifPanel();
+}
+
+function notifItemHtml(it) {
+  const when = timeAgo(it.createdAt);
+  if (it.kind === 'order') {
+    const n = it.itemCount || 0;
+    return `
+      <button type="button" class="notif-item" data-notif-kind="order" data-notif-id="${escapeAttr(it.id)}">
+        <span class="notif-item__kind">New order</span>
+        <span class="notif-item__title">${money(it.amount)} · ${escapeHtml(it.name || 'Customer')}</span>
+        <span class="notif-item__meta">${n} item${n === 1 ? '' : 's'} · ${escapeHtml(when)}</span>
+      </button>`;
+  }
+  const type = (ENQUIRY_TYPE_META[it.type] || { label: 'Enquiry' }).label;
+  return `
+    <button type="button" class="notif-item" data-notif-kind="enquiry" data-notif-id="${escapeAttr(it.id)}">
+      <span class="notif-item__kind">${escapeHtml(type)}</span>
+      <span class="notif-item__title">${escapeHtml(it.name || 'Someone')}${it.workshopTitle ? ` · ${escapeHtml(it.workshopTitle)}` : ''}</span>
+      <span class="notif-item__meta">${escapeHtml(when)}</span>
+    </button>`;
+}
+
+function renderNotifPanel() {
+  const list = $('#notif-list');
+  list.innerHTML = notif.items.length
+    ? notif.items.map(notifItemHtml).join('')
+    : '<p class="notif-panel__empty">You’re all caught up.</p>';
+  $('#notif-mark-all').hidden = !notif.items.length;
+}
+
+function timeAgo(iso) {
+  const t = Date.parse(iso || '');
+  if (!t) return '';
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} hr${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.round(hrs / 24);
+  return days < 7 ? `${days} day${days === 1 ? '' : 's'} ago` : new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
+// The sidebar clips its overflow, so the panel is fixed-position and placed
+// under the bell each time it opens.
+function openNotifPanel() {
+  const panel = $('#notif-panel');
+  const bell = $('#notif-bell');
+  renderNotifPanel();
+  panel.hidden = false;
+  const r = bell.getBoundingClientRect();
+  const w = panel.offsetWidth;
+  panel.style.top = `${r.bottom + 8}px`;
+  panel.style.left = `${Math.max(16, Math.min(r.left, window.innerWidth - w - 16))}px`;
+  bell.setAttribute('aria-expanded', 'true');
+  refreshNotifications();
+}
+
+function closeNotifPanel() {
+  $('#notif-panel').hidden = true;
+  $('#notif-bell').setAttribute('aria-expanded', 'false');
+}
+
+$('#notif-bell').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if ($('#notif-panel').hidden) openNotifPanel(); else closeNotifPanel();
+});
+document.addEventListener('click', (e) => {
+  if (!$('#notif-panel').hidden && !e.target.closest('#notif-panel')) closeNotifPanel();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#notif-panel').hidden) { closeNotifPanel(); $('#notif-bell').focus(); }
+});
+window.addEventListener('resize', closeNotifPanel);
+
+$('#notif-list').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-notif-id]');
+  if (!btn) return;
+  closeNotifPanel();
+  const { notifKind: kind, notifId: id } = btn.dataset;
+  if (kind === 'order') {
+    showTab('orders');
+    let o = state.orders.find((x) => x.id === id);
+    if (!o) { await loadOrders(); o = state.orders.find((x) => x.id === id); }
+    if (o) openOrderModal(o);
+  } else {
+    showTab('enquiries');
+    let q = state.enquiries.find((x) => x.id === id);
+    if (!q) { await loadEnquiries(); q = state.enquiries.find((x) => x.id === id); }
+    if (q) openEnquiryModal(q);
+  }
+});
+
+$('#notif-mark-all').addEventListener('click', async () => {
+  try {
+    await api('POST', '/api/admin/notifications/seen');
+    state.orders.forEach((o) => { o.unseen = false; });
+    state.enquiries.forEach((q) => { q.unseen = false; });
+    renderOrders();
+    renderEnquiries();
+    Object.assign(notif, { orders: 0, enquiries: 0, items: [] });
+    renderNotifications();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+
+// Opening a record is what "seen" means. Updates locally right away; the server
+// stamp is shared, so the other admins' bells clear on their next poll.
+function markSeen(kind, rec) {
+  if (!rec || !rec.unseen) return;
+  rec.unseen = false;
+  const key = kind === 'order' ? 'orders' : 'enquiries';
+  notif[key] = Math.max(0, notif[key] - 1);
+  notif.items = notif.items.filter((it) => !(it.kind === kind && it.id === rec.id));
+  renderNotifications();
+  if (kind === 'order') renderOrders(); else renderEnquiries();
+  api('POST', `/api/admin/${key}/${encodeURIComponent(rec.id)}/seen`).catch(() => {});
+}
+
+function startNotifications() {
+  clearInterval(notif.timer);
+  refreshNotifications();
+  notif.timer = setInterval(() => {
+    if (document.visibilityState === 'visible') refreshNotifications();
+  }, NOTIF_POLL_MS);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && notif.timer) refreshNotifications();
+});
+
+function stopNotifications() {
+  clearInterval(notif.timer);
+  notif.timer = null;
+  Object.assign(notif, { orders: 0, enquiries: 0, items: [] });
+  renderNotifications();
+  closeNotifPanel();
+}
 
 // "← Back to page design" on the record panels, which are reached from a page
 // rather than from the sidebar.
@@ -218,7 +414,7 @@ async function loadAll() {
 
 // ---------- Website page design ----------
 
-// One entry per item in the sidebar's "Website page design" group, in the same
+// One entry per item in the sidebar's "Pages" group (Website controls), in the same
 // order as the public site's navigation.
 //
 //   content  — key in /api/content whose fields this page edits
@@ -236,7 +432,7 @@ const PAGES = {
   shop: {
     title: 'Shop', url: '/shop.html', content: 'shop', sections: 'shop',
     records: { tab: 'products', label: 'Manage products' },
-    subtitle: 'The Collection page. Individual products live under Admin features → Products.',
+    subtitle: 'The Collection page. Individual products live under Store → Products.',
   },
   workshops: {
     title: 'Workshops', url: '/workshops.html', content: 'workshops', sections: 'workshops',
@@ -289,7 +485,7 @@ const PAGES = {
   },
   'shipping-policy': {
     title: 'Shipping Policy', url: '/shipping.html', content: 'shipping', richText: true,
-    subtitle: 'Linked from the footer on every page. Delivery prices themselves are set under Admin features → Shipping.',
+    subtitle: 'Linked from the footer on every page. Delivery prices themselves are set under Store → Shipping.',
   },
 };
 
@@ -1285,7 +1481,7 @@ function openProductModal(product) {
           <input name="dimHeight" type="number" min="0" step="0.1" value="${p.dimensionsCm?.height ?? ''}" placeholder="e.g. 6">
         </label>
       </div>
-      <p class="field__hint">Package size only changes the price when a volumetric divisor is set under Admin features → Shipping (India Post bills actual weight, couriers bill the greater of the two).</p>
+      <p class="field__hint">Package size only changes the price when a volumetric divisor is set under Store → Shipping (India Post bills actual weight, couriers bill the greater of the two).</p>
       <label class="field">
         <span class="field__label">Tags (comma-separated, e.g. INDIGO, TOPWEAR)</span>
         <input name="tags" value="${escapeAttr((p.tags || []).join(', '))}">
@@ -1505,6 +1701,10 @@ function openWorkshopModal(workshop) {
         </label>
       </div>
       <label class="field">
+        <span class="field__label">Tagline — one line under the title on the detail page (optional)</span>
+        <input name="tagline" maxlength="200" value="${escapeAttr(w.tagline || '')}" placeholder="e.g. Print your own tote with hand-carved wooden blocks">
+      </label>
+      <label class="field">
         <span class="field__label">Description</span>
         <textarea name="description" required>${escapeHtml(w.description)}</textarea>
       </label>
@@ -1518,6 +1718,10 @@ function openWorkshopModal(workshop) {
           <input name="packageFor" value="${escapeAttr(w.packageFor || '')}" placeholder="e.g. Package for 25 people">
         </label>
       </div>
+      <label class="field">
+        <span class="field__label">Where — shown in the booking card (optional)</span>
+        <input name="location" maxlength="120" value="${escapeAttr(w.location || '')}" placeholder="e.g. Our studio, Kanakapura Road · or at your office">
+      </label>
       <label class="field">
         <span class="field__label">Tags (comma-separated)</span>
         <input name="tags" value="${escapeAttr((w.tags || []).join(', '))}">
@@ -1558,12 +1762,24 @@ function openWorkshopModal(workshop) {
         </label>
       </fieldset>
       <label class="field">
-        <span class="field__label">"What the experience includes" (one per line) — corporate / curated only</span>
+        <span class="field__label">Booking card highlights — short selling points with a tick, one per line (max 12)</span>
+        <textarea name="highlights" placeholder="All materials included&#10;Take home what you print&#10;No experience needed">${escapeHtml((w.highlights || []).join('\n'))}</textarea>
+      </label>
+      <label class="field">
+        <span class="field__label">"What's included" (one per line)</span>
         <textarea name="includes">${escapeHtml((w.includes || []).join('\n'))}</textarea>
       </label>
       <label class="field">
-        <span class="field__label">"Ideal for" (one per line) — corporate / curated only</span>
+        <span class="field__label">"Ideal for" (one per line)</span>
         <textarea name="idealFor">${escapeHtml((w.idealFor || []).join('\n'))}</textarea>
+      </label>
+      <label class="field">
+        <span class="field__label">Questions people ask — question on the first line, answer below it; blank line between questions</span>
+        <textarea name="faqs" rows="6" placeholder="What should I wear?&#10;Something you don't mind getting dye on. Aprons are provided.&#10;&#10;Can I bring my own fabric?&#10;Yes, cotton and silk work best.">${escapeHtml((w.faqs || []).map((f) => `${f.q}\n${f.a || ''}`.trim()).join('\n\n'))}</textarea>
+      </label>
+      <label class="field">
+        <span class="field__label">Closing note — a short paragraph at the end of the page (optional; corporate workshops fall back to the standard "flexible formats" text)</span>
+        <textarea name="closingNote" maxlength="1500">${escapeHtml(w.closingNote || '')}</textarea>
       </label>
       <div id="workshop-gallery-media"></div>
       <div class="form-actions">
@@ -1575,7 +1791,7 @@ function openWorkshopModal(workshop) {
 
   const wsMedia = mountMediaEditor($('#workshop-media'), entityMedia(w, 'image'), {
     label: 'Photos & videos',
-    hint: 'The first item is the hero and the card image; a second one fills the wide banner on the detail page.',
+    hint: 'The first item is the card image and the title-band backdrop. The detail page shows up to five of these in its photo grid (the first one is never cropped); visitors can open all of them in the viewer. Videos get a play button.',
   });
   const wsGallery = mountMediaEditor($('#workshop-gallery-media'), w.gallery, {
     label: 'Photo gallery (mosaic)',
@@ -1600,8 +1816,17 @@ function openWorkshopModal(workshop) {
       totalSeats: Number(fd.get('totalSeats')) || 0,
       media: wsMedia.getValue(),
       gallery: wsGallery.getValue(),
-      includes: (fd.get('includes') || '').toString().split('\n').map((s) => s.trim()).filter(Boolean),
-      idealFor: (fd.get('idealFor') || '').toString().split('\n').map((s) => s.trim()).filter(Boolean),
+      includes: splitLines(fd.get('includes')),
+      idealFor: splitLines(fd.get('idealFor')),
+      highlights: splitLines(fd.get('highlights')),
+      tagline: (fd.get('tagline') || '').toString().trim(),
+      location: (fd.get('location') || '').toString().trim(),
+      closingNote: (fd.get('closingNote') || '').toString().trim(),
+      // Blocks separated by a blank line: first line is the question, the rest the answer.
+      faqs: (fd.get('faqs') || '').toString().replace(/\r/g, '').split(/\n\s*\n/)
+        .map((block) => block.split('\n').map((l) => l.trim()).filter(Boolean))
+        .filter((lines) => lines.length)
+        .map(([q, ...a]) => ({ q, a: a.join('\n') })),
     };
     if (priceMode === 'numeric') {
       payload.price = Number(fd.get('price'));
@@ -1623,6 +1848,10 @@ function openWorkshopModal(workshop) {
       toast(err.message, true);
     }
   });
+}
+
+function splitLines(v) {
+  return (v || '').toString().split('\n').map((s) => s.trim()).filter(Boolean);
 }
 
 async function confirmDeleteWorkshop(id) {
@@ -2514,7 +2743,7 @@ function supportsCanvasFilter() {
   return canvasFilterSupport;
 }
 
-function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockAspect = false } = {}) {
+function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockAspect = false, libraryCopy = false } = {}) {
   const m = normalizeMedia(media);
   // What the editor remembers about this photo (see normalizeMediaEdit on the
   // server): the crop shape chosen last time and, for an edited copy, the
@@ -3197,11 +3426,14 @@ function openFrameModal(media, onSave, { aspect = '0.8', aspectLabel = '', lockA
   const saveCopy = async (btn) => {
     btn.disabled = true;
     try {
-      const url = await uploadFile(await renderEdited());
       // The copy remembers the original it was cut from — which is the
       // remembered original again when this was itself re-edited from one.
-      onSave({ ...m, url, fit: 'cover', position: '50% 50%',
-        edit: editRecord(sourceMode ? remembered.source : m.url) });
+      const source = sourceMode ? remembered.source : m.url;
+      // A copy made for a field is a working file: tagging it lets the server
+      // drop it from the library once a newer edit replaces it. A copy saved
+      // from the Gallery tab is a deliberate new library image and is kept.
+      const url = await uploadFile(await renderEdited(), libraryCopy ? {} : { editCopyOf: source });
+      onSave({ ...m, url, fit: 'cover', position: '50% 50%', edit: editRecord(source) });
       closeFrameLayer();
       toast('Edited copy uploaded');
     } catch (err) {
@@ -3395,6 +3627,8 @@ function checkProxySize(file, why) {
 // Videos the server is shrinking in the background since the last upload
 // report, so the report can say so.
 let pendingVideoCompressions = 0;
+// Uploads the server matched to a file already in the library, since the last report.
+let reusedUploads = 0;
 
 // PUT the file straight at S3 with a presigned URL, reporting real progress.
 //
@@ -3452,7 +3686,10 @@ async function uploadOne(file, meta = {}, onProgress) {
     return api('POST', '/api/admin/upload', fd, true);
   };
   const done = (res) => {
-    if (res && res.item && res.item.processing === 'pending') pendingVideoCompressions += 1;
+    // The server answers a file it already holds with the existing record
+    // rather than storing a second copy.
+    if (res && res.duplicate) reusedUploads += 1;
+    else if (res && res.item && res.item.processing === 'pending') pendingVideoCompressions += 1;
     return res;
   };
 
@@ -3482,8 +3719,8 @@ async function uploadOne(file, meta = {}, onProgress) {
 
 // Upload bytes only. Every upload auto-registers into the gallery library;
 // here we just need the returned URL for the field being edited.
-async function uploadFile(file) {
-  const res = await uploadOne(file);
+async function uploadFile(file, meta = {}) {
+  const res = await uploadOne(file, meta);
   return res.url;
 }
 
@@ -3532,6 +3769,7 @@ async function uploadImage(file, meta = {}, onProgress) {
 // total, file)` fires before each file starts.
 async function uploadFiles(files, onProgress) {
   pendingVideoCompressions = 0;
+  reusedUploads = 0;
   const items = [];
   const errors = [];
   let done = 0;
@@ -3554,8 +3792,11 @@ async function uploadFiles(files, onProgress) {
 // file failed, and a partial-success summary when some got through.
 function reportUploadResult(okCount, errors, { done = 'uploaded to the library' } = {}) {
   const shrinking = pendingVideoCompressions;
+  const reused = reusedUploads;
   pendingVideoCompressions = 0;
-  const note = shrinking ? ` · ${shrinking === 1 ? 'the video' : `${shrinking} videos`} will be compressed to web size in the background` : '';
+  reusedUploads = 0;
+  const note = (shrinking ? ` · ${shrinking === 1 ? 'the video' : `${shrinking} videos`} will be compressed to web size in the background` : '')
+    + (reused ? ` · ${reused === 1 ? '1 was' : `${reused} were`} already in the library, so the existing copy was used` : '');
   if (errors.length && !okCount) {
     toast(errors.length === 1 ? errors[0].message : `All ${errors.length} files failed — ${errors[0].message}`, true);
   } else if (errors.length) {
@@ -3717,9 +3958,9 @@ function renderEnquiries() {
       : '';
     const preview = (e.message || '').replace(/\s+/g, ' ').slice(0, 140);
     return `
-      <div class="admin-row order-row">
+      <div class="admin-row order-row${e.unseen ? ' is-unseen' : ''}">
         <div class="order-row__main">
-          <p class="order-row__title"><strong>${escapeHtml(type)}</strong> ${enquiryStatusBadge(e.status || 'new')} ${unmailed}</p>
+          <p class="order-row__title">${e.unseen ? '<span class="unseen-dot" title="Not opened yet"></span>' : ''}<strong>${escapeHtml(type)}</strong> ${enquiryStatusBadge(e.status || 'new')} ${unmailed}</p>
           <p class="admin-row__meta">${who}${about} · ${escapeHtml(enquiryDate(e.createdAt))}</p>
           ${preview ? `<p class="admin-row__meta">${escapeHtml(preview)}${(e.message || '').length > 140 ? '…' : ''}</p>` : ''}
         </div>
@@ -3772,6 +4013,7 @@ function enquiryDetailRow(label, value, href) {
 }
 
 function openEnquiryModal(e) {
+  markSeen('enquiry', e);
   const type = (ENQUIRY_TYPE_META[e.type] || { label: e.type || 'Enquiry' }).label;
   openModal(`${type} — ${e.name || e.email || 'Enquiry'}`, `
     <div class="form-grid">
@@ -3933,11 +4175,49 @@ $('#gallery-grid')?.addEventListener('click', (e) => {
         } catch (err) { toast(err.message, true); }
       }
       loadAll();
-    }, { aspect: 'free' });
+    }, { aspect: 'free', libraryCopy: true });
   }
 });
 
 $('#add-gallery-btn')?.addEventListener('click', () => openGalleryForm(null));
+
+// Collapse the library to one record per file. A dry run first, so the admin
+// sees exactly what goes before anything is removed.
+$('#dedupe-gallery-btn')?.addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const plan = await api('POST', '/api/admin/gallery/dedupe', { dryRun: true });
+    const dupes = plan.duplicates.reduce((n, d) => n + d.remove.length, 0);
+    const copies = plan.editCopies.length;
+    if (!dupes && !copies) { toast('No duplicates — every image is in the library once'); return; }
+    const rows = [
+      ...plan.duplicates.map((d) => `<li><strong>${escapeHtml(d.keep.title)}</strong> — keeping one, removing ${d.remove.length} ${d.remove.length === 1 ? 'copy' : 'copies'}</li>`),
+      ...(copies ? [`<li>${copies} unused edited ${copies === 1 ? 'copy' : 'copies'} left over from photo edits</li>`] : []),
+    ].join('');
+    openModal('Remove duplicates', `
+      <p style="color:var(--sc-l3);margin-bottom:16px;">${dupes + copies} private library ${dupes + copies === 1 ? 'entry' : 'entries'} will be removed. Products, workshops, sections and blogs using a removed copy are switched to the copy that is kept, so nothing on the site changes. Public images are never removed.</p>
+      <ul style="max-height:280px;overflow:auto;margin:0 0 24px;padding-left:20px;color:var(--sc-l3);">${rows}</ul>
+      <div class="form-actions">
+        <button type="button" class="btn btn--ghost" data-modal-close>Cancel</button>
+        <button type="button" class="btn btn--danger" id="confirm-dedupe">Remove duplicates</button>
+      </div>
+    `);
+    $('#confirm-dedupe').addEventListener('click', async (ev) => {
+      ev.currentTarget.disabled = true;
+      try {
+        const res = await api('POST', '/api/admin/gallery/dedupe', {});
+        toast(`Removed ${res.removed} duplicate ${res.removed === 1 ? 'entry' : 'entries'}`);
+        closeModal();
+        loadAll();
+      } catch (err) { toast(err.message, true); ev.currentTarget.disabled = false; }
+    });
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // New = upload form (file required). Edit = metadata only (delete + re-upload to
 // change the image). Both flows keep a single library record per image.
@@ -4100,6 +4380,7 @@ function openGalleryForm(item) {
         const errors = [];
         let ok = 0;
         pendingVideoCompressions = 0;
+        reusedUploads = 0;
         for (const [i, file] of files.entries()) {
           const head = files.length === 1 ? `Uploading ${file.name}` : `Uploading ${i + 1} of ${files.length} — ${file.name}`;
           toast(`${head}…`);
@@ -4496,9 +4777,9 @@ function renderOrders() {
     const manual = (o.source === 'manual' ? '<span class="order-tag">Manual</span>' : '')
       + (o.needsReview ? `<span class="order-tag order-tag--alert" title="${escapeAttr(o.needsReview)}">Needs review</span>` : '');
     return `
-      <div class="admin-row order-row">
+      <div class="admin-row order-row${o.unseen ? ' is-unseen' : ''}">
         <div class="order-row__main">
-          <p class="order-row__title"><strong>${money(o.amount)}</strong> ${statusBadge(o.status)} ${manual}</p>
+          <p class="order-row__title">${o.unseen ? '<span class="unseen-dot" title="Not opened yet"></span>' : ''}<strong>${money(o.amount)}</strong> ${statusBadge(o.status)} ${manual}</p>
           <p class="admin-row__meta">${who} · ${itemCount} item${itemCount === 1 ? '' : 's'} · ${escapeHtml(orderDate(o.createdAt))} · <span class="order-id">${escapeHtml(o.id)}</span> ${link}</p>
         </div>
         <div class="order-row__actions">
@@ -4606,6 +4887,7 @@ function orderPricingHtml(p) {
 }
 
 function openOrderModal(o) {
+  if (o) markSeen('order', o);
   const isEdit = !!o;
   const v = o || {};
   const addr = v.address || {};

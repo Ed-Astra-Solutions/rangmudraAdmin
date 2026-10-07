@@ -37,13 +37,31 @@
   <div id="app-shell" class="app-shell" hidden>
     <aside class="admin-sidebar">
       <div class="admin-sidebar__brand">
-        <span class="brand-wordmark"><b class="brand-name">RangMudra</b></span>
-        <span class="brand-tag">Admin</span>
+        <div class="admin-sidebar__brandtext">
+          <span class="brand-wordmark"><b class="brand-name">RangMudra</b></span>
+          <span class="brand-tag">Admin</span>
+        </div>
+        <!-- Unseen paid orders + new enquiries. Polls the server; the panel lists
+             them and opening one marks it seen for every admin. -->
+        <button type="button" class="notif-bell" id="notif-bell" aria-haspopup="true" aria-expanded="false" aria-controls="notif-panel" aria-label="Notifications">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
+          <span class="nav-badge notif-bell__badge" data-notif-count="all" hidden></span>
+        </button>
       </div>
-      <nav class="admin-nav" role="tablist" aria-label="Admin sections">
-        <!-- Group 1 — the public site, listed in the same order as the site's
-             own navigation so a missing page is obvious against the live menu. -->
-        <p class="admin-nav__group">Website page design</p>
+
+      <!-- The two halves of the console. Each owns its own tab list below. -->
+      <div class="admin-switch" role="tablist" aria-label="Admin area">
+        <button type="button" class="admin-switch__btn" role="tab" data-nav-switch="website" aria-selected="true">Website controls</button>
+        <button type="button" class="admin-switch__btn" role="tab" data-nav-switch="inbox" aria-selected="false">
+          Enquiries &amp; orders <span class="nav-badge" data-notif-count="all" hidden></span>
+        </button>
+      </div>
+
+      <!-- Section 1 — Website controls: what the public site shows. -->
+      <nav class="admin-nav" role="tablist" aria-label="Website controls" data-nav-set="website">
+        <!-- Pages are listed in the same order as the site's own navigation so a
+             missing page is obvious against the live menu. -->
+        <p class="admin-nav__group">Pages</p>
         <button class="admin-tab" role="tab" data-tab="pages" data-page="homepage" aria-selected="true">Home</button>
         <button class="admin-tab" role="tab" data-tab="pages" data-page="shop" aria-selected="false">Shop</button>
         <button class="admin-tab" role="tab" data-tab="pages" data-page="workshops" aria-selected="false">Workshops</button>
@@ -58,16 +76,22 @@
         <button class="admin-tab" role="tab" data-tab="pages" data-page="shipping-policy" aria-selected="false">Shipping Policy</button>
         <button class="admin-tab" role="tab" data-tab="sections" aria-selected="false">All images</button>
 
-        <!-- Group 2 — running the business. -->
-        <p class="admin-nav__group">Admin features</p>
+        <p class="admin-nav__group">Store</p>
         <button class="admin-tab" role="tab" data-tab="products" aria-selected="false">Products</button>
         <button class="admin-tab" role="tab" data-tab="process" aria-selected="false">The Process</button>
-        <button class="admin-tab" role="tab" data-tab="orders" aria-selected="false">Orders</button>
         <button class="admin-tab" role="tab" data-tab="discounts" aria-selected="false">Discounts</button>
         <button class="admin-tab" role="tab" data-tab="shipping" aria-selected="false">Shipping</button>
-        <button class="admin-tab" role="tab" data-tab="enquiries" aria-selected="false">Enquiries</button>
+
+        <p class="admin-nav__group">Team</p>
         <button class="admin-tab" role="tab" data-tab="admins" aria-selected="false">Admins</button>
       </nav>
+
+      <!-- Section 2 — Enquiries & orders: what customers have sent in. -->
+      <nav class="admin-nav" role="tablist" aria-label="Enquiries and orders" data-nav-set="inbox" hidden>
+        <button class="admin-tab" role="tab" data-tab="orders" aria-selected="false">Orders <span class="nav-badge" data-notif-count="orders" hidden></span></button>
+        <button class="admin-tab" role="tab" data-tab="enquiries" aria-selected="false">Enquiries <span class="nav-badge" data-notif-count="enquiries" hidden></span></button>
+      </nav>
+
       <div class="admin-sidebar__footer">
         <p class="admin-sidebar__who" id="current-admin" hidden></p>
         <a class="link-quiet" href="/" target="_blank" rel="noopener">View site ↗</a>
@@ -75,10 +99,18 @@
       </div>
     </aside>
 
+    <div class="notif-panel" id="notif-panel" role="dialog" aria-label="Notifications" hidden>
+      <div class="notif-panel__head">
+        <p class="notif-panel__title">New activity</p>
+        <button type="button" class="link-quiet notif-panel__clear" id="notif-mark-all">Mark all seen</button>
+      </div>
+      <div class="notif-panel__list" id="notif-list"></div>
+    </div>
+
     <main class="admin-main">
 
       <!-- ============== PAGES (website page design) ==============
-           One panel serving every entry in the "Website page design" group.
+           One panel serving every entry in the "Pages" group under Website controls.
            The clicked tab sets data-page and renderPage() fills in that page's
            editable text, its image slots, and a link to whatever records the
            page lists (products, workshops, posts, media). -->
@@ -240,7 +272,10 @@
             <h2 class="panel__title">Gallery</h2>
             <p class="panel__subtitle">The central media library. Every uploaded image lives here with a title, description, and tags. Mark an image <strong>Public</strong> to feature it in the consumer design gallery and its SEO page.</p>
           </div>
-          <button class="btn btn--primary" id="add-gallery-btn">+ Upload media</button>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <button class="btn btn--ghost" id="dedupe-gallery-btn" type="button">Remove duplicates</button>
+            <button class="btn btn--primary" id="add-gallery-btn">+ Upload media</button>
+          </div>
         </div>
         <div class="gallery-toolbar-admin">
           <input type="search" id="gallery-admin-search" class="gallery-admin-search" placeholder="Search the library — title or tag…" aria-label="Search the media library">
