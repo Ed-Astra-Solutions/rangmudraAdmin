@@ -3523,7 +3523,7 @@ const needsServerTranscode = (file) =>
 //
 // Photos straight off a camera or phone are 4000–8000 px and several MB, far
 // more than any page here shows. They are scaled so the long edge is at most
-// IMAGE_MAX_EDGE (wide enough for a full-bleed banner on a retina screen) and
+// IMAGE_MAX_EDGE (1920 px, the wedding_clikz desktop size; ample for every slot here) and
 // re-encoded as JPEG — or PNG when the image has transparency — before they
 // leave the browser. Same approach as the wedding_clikz admin's compressImage.
 // Re-encoding also drops EXIF, so phone GPS data never reaches the bucket.
@@ -3531,7 +3531,7 @@ const needsServerTranscode = (file) =>
 // GIFs (may be animated) and anything that isn't a photo format pass through
 // untouched, and a re-encode that comes out bigger than the original is
 // discarded in favour of the original.
-const IMAGE_MAX_EDGE = 2560;
+const IMAGE_MAX_EDGE = 1920;
 const IMAGE_QUALITY = 0.85;
 const COMPRESSIBLE_IMAGE_RE = /^image\/(jpeg|png|webp|avif)$/i;
 // Already-small images that need no resize are left alone.
